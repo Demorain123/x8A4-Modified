@@ -20,6 +20,7 @@
 #include <x8A4/Kernel/kpf.h>
 #include <libkrw.h>
 #include <x8A4/key_bounds.h>
+#include <x8A4/target_key.h>
 #include <x8A4/key_table_reader.h>
 
 static int x8A4_key_table_kread(uint64_t addr, void *out, size_t size) {
@@ -1337,46 +1338,74 @@ void x8A4_cli_get_apnonce(void) {
  * @brief           CLI get IOAESAccelerator keys
  * @param[in]       chosen_key
  */
+/*
+ * Deliberately scan just the requested key. No whole-table allocation, no
+ * cleanup table ownership changes and no kernel writes.
+ */
+_Static_assert(sizeof(struct x8A4_accel_key) ==
+               sizeof(struct x8A4_target_key_record),
+               "Expected accelerator key layout changed");
+
+static int x8A4_target_kread(uint64_t address, void *out, size_t size,
+                            void *unused) {
+  (void)unused;
+  return kread(address, out, size);
+}
+
+static int x8A4_lookup_target_key(uint32_t chosen_key,
+                                  struct x8A4_target_key_record *result,
+                                  uint32_t *index) {
+  if (!result || !index || !koffsets_cached ||
+      !koffsets_cached->io_aes_accel_special_keys ||
+      !koffsets_cached->io_aes_accel_special_keys_size)
+    return -1;
+
+  uint64_t kobj = get_ipc_kobject(get_io_aes_accel_service());
+  if (!kobj ||
+      kobj > UINT64_MAX - koffsets_cached->io_aes_accel_special_keys ||
+      kobj > UINT64_MAX - koffsets_cached->io_aes_accel_special_keys_size)
+    return -1;
+
+  uint64_t kernel_keys = 0;
+  uint32_t count = 0;
+  if (kread(kobj + koffsets_cached->io_aes_accel_special_keys,
+            &kernel_keys, sizeof(kernel_keys)) ||
+      !kernel_keys ||
+      kread(kobj + koffsets_cached->io_aes_accel_special_keys_size,
+            &count, sizeof(count)) ||
+      !x8A4_accel_count_valid(count))
+    return -1;
+
+  return x8A4_scan_target_key(kernel_keys, count, chosen_key, result, index,
+                             x8A4_target_kread, NULL);
+}
+
 int x8A4_cli_get_accel_keys(uint32_t chosen_key) {
   if (chosen_key != 0x8A3 && chosen_key != 0x8A4) {
-    x8A4_log_error("Only explicitly requested 0x8A3 or 0x8A4 is supported.\n", "");
+    x8A4_log_error("Only 0x8A3 or 0x8A4 may be requested.\n", "");
     return -1;
   }
-  uint32_t count = 0;
-  struct x8A4_accel_key *keys = x8A4_get_ioaesaccelkeys(&count);
-  if (!keys) {
-    x8A4_log_error("Cannot safely inspect accelerator keys.\n", "");
+
+  struct x8A4_target_key_record key = {0};
+  uint32_t index = UINT32_MAX;
+  int status = x8A4_lookup_target_key(chosen_key, &key, &index);
+  if (status != 0) {
+    x8A4_log_error("Requested key read failed validation or was not found.\n", "");
+    memset(&key, 0, sizeof(key));
     return -1;
   }
-  int status = -1;
-  for (uint32_t i = 0; i < count; ++i) {
-    const struct x8A4_accel_key *entry = &keys[i];
-    if (entry->key_id != chosen_key) continue;
-    if (entry->generated != 1 ||
-        (entry->key_sz != 16 && entry->key_sz != 128)) {
-      x8A4_log_error("Matching key has invalid metadata.\n", "");
-      break;
-    }
-    x8A4_log("Key(0x%04X) Index: %u\n", entry->key_id, i);
-    x8A4_log("Key(0x%04X) Generated: %u\n", entry->key_id, entry->generated);
-    x8A4_log("Key(0x%04X) Size: %u\n", entry->key_id, entry->key_sz);
-    x8A4_log("Key(0x%04X) KEY: 0x%08X%08X%08X%08X\n", entry->key_id,
-             __builtin_bswap32(entry->key[0]), __builtin_bswap32(entry->key[1]),
-             __builtin_bswap32(entry->key[2]), __builtin_bswap32(entry->key[3]));
-    x8A4_log("Key(0x%04X) IV: 0x%08X%08X%08X%08X\n", entry->key_id,
-             __builtin_bswap32(entry->iv[0]), __builtin_bswap32(entry->iv[1]),
-             __builtin_bswap32(entry->iv[2]), __builtin_bswap32(entry->iv[3]));
-    status = 0;
-    break;
-  }
-  if (status) x8A4_log_error("Requested key not found or failed validation.\n", "");
-  /* Mark the original allocation as freed so x8A4_free will not free it twice.
-   * Otherwise defer freeing until x8A4_free, preserving ownership safety. */
-  if (gc_d_cached && gc_d_count_cached >= 0 && gc_d_count_cached < 128) {
-    gc_d_cached[gc_d_count_cached++] = (uint64_t)keys;
-    free(keys);
-  }
-  return status;
+
+  x8A4_log("Key(0x%04X) Index: %u\n", key.key_id, index);
+  x8A4_log("Key(0x%04X) Generated: %u\n", key.key_id, key.generated);
+  x8A4_log("Key(0x%04X) Size: %u\n", key.key_id, key.key_sz);
+  x8A4_log("Key(0x%04X) KEY: 0x%08X%08X%08X%08X\n", key.key_id,
+           __builtin_bswap32(key.key[0]), __builtin_bswap32(key.key[1]),
+           __builtin_bswap32(key.key[2]), __builtin_bswap32(key.key[3]));
+  x8A4_log("Key(0x%04X) IV: 0x%08X%08X%08X%08X\n", key.key_id,
+           __builtin_bswap32(key.iv[0]), __builtin_bswap32(key.iv[1]),
+           __builtin_bswap32(key.iv[2]), __builtin_bswap32(key.iv[3]));
+  memset(&key, 0, sizeof(key));
+  return 0;
 }
 
 /**
