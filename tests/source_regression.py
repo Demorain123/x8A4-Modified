@@ -34,7 +34,7 @@ for forbidden in (
 ):
     assert forbidden not in cli, f"Mutation API exposed by CLI: {forbidden}"
 
-assert "(entry->key_sz != 16 && entry->key_sz != 128)" in src
+assert "entry.key_sz != 16 && entry.key_sz != 128" in (root / "Include/x8A4/target_key.h").read_text()
 assert "X8A4_ENABLE_LIVE_KEY_READ" in cli
 assert "live kernel key reading disabled" in cli
 # The CLI must use the single-key stack scanner, not allocate the entire
