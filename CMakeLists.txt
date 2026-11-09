@@ -2,11 +2,14 @@ cmake_minimum_required(VERSION 3.27)
 project(x8A4 C)
 
 set(CMAKE_C_STANDARD 17)
-string(COMPARE EQUAL "${CMAKE_OSX_ARCHITECTURES}" "" arch_not_set)
-if(NOT DEFINED CMAKE_OSX_ARCHITECTURES OR arch_not_set)
-    set(CMAKE_OSX_ARCHITECTURES arm64 arm64e)
+if(NOT CMAKE_OSX_ARCHITECTURES)
+    # libkrw on the target Dopamine device uses the arm64 userspace ABI.
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
 endif()
-set(CMAKE_OSX_DEPLOYMENT_TARGET "")
+if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+endif()
+option(X8A4_ENABLE_LIVE_KEY_READ "Enable EXPERIMENTAL on-device kernel key reads" OFF)
 
 find_program(LDID ldid2)
 if(NOT LDID)
@@ -37,7 +40,7 @@ else()
     set(VERSION_COMMIT_SHA "unknown")
 endif()
 
-add_library(x8A4 STATIC SHARED x8A4.c
+add_library(x8A4 SHARED x8A4.c
         Logger/logger.c
         Include/x8A4/Logger/logger.h
         Kernel/slide.c
@@ -85,9 +88,12 @@ target_link_libraries(x8A4
         krw
         compression
         choma
-        XPF)
+        xpf)
 
 add_executable(x8A4_CLI x8A4_CLI.c)
+if(X8A4_ENABLE_LIVE_KEY_READ)
+    target_compile_definitions(x8A4_CLI PRIVATE X8A4_ENABLE_LIVE_KEY_READ=1)
+endif()
 
 add_definitions(
         -DVERSION_COMMIT_COUNT="${VERSION_COMMIT_COUNT}"
