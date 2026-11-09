@@ -19,6 +19,10 @@
 #include <x8A4/x8A4.h>
 #include <x8A4/Kernel/kpf.h>
 #include <libkrw.h>
+#include <x8A4/key_bounds.h>
+
+_Static_assert(sizeof(struct x8A4_accel_key) == 52,
+               "IOAESAccelerator key record layout changed");
 
 /* Cached Variables */
 int init_done = 0;
@@ -77,8 +81,16 @@ int x8A4_init(void) {
   if (offsets_init()) {
     return -1;
   }
-  gc_cached = calloc(1, 1024);
-  gc_d_cached = calloc(1, 1024);
+  gc_cached = calloc(128, sizeof(*gc_cached));
+  gc_d_cached = calloc(128, sizeof(*gc_d_cached));
+  if (!gc_cached || !gc_d_cached) {
+    free(gc_cached);
+    free(gc_d_cached);
+    gc_cached = NULL;
+    gc_d_cached = NULL;
+    x8A4_log_error("Unable to allocate cleanup tables.\n", "");
+    return -1;
+  }
   init_done = 1;
   return 0;
 }
@@ -784,17 +796,20 @@ uint8_t *x8A4_get_cryptex_nonce(uint32_t *nonce_size) {
     x8A4_log_error("Failed to get IOAESAccelerator keys! (%d:0x%016llX)\n", keys_count, keys);
     return NULL;
   }
-  uint32_t chosen_key = 0x8A4;
-  uint32_t struct_size = sizeof(struct x8A4_accel_key);
-  for (int i = 0; i < keys_count; i++) {
-    struct x8A4_accel_key *cur_key = keys + (struct_size * i);
-    if (cur_key->key_id == chosen_key) {
-      keys = cur_key;
+  struct x8A4_accel_key *selected = NULL;
+  for (uint32_t i = 0; i < keys_count; ++i) {
+    if (keys[i].key_id == 0x8A4 && keys[i].generated == 1 &&
+        keys[i].key_sz == 128) {
+      selected = &keys[i];
       break;
     }
   }
-  uint32_t *cryptex_key_key = &keys->key[0];
-  uint32_t *cryptex_key_iv = &keys->iv[0];
+  if (!selected) {
+    x8A4_log_error("A valid 0x8A4 key was not found.\n", "");
+    return NULL;
+  }
+  uint32_t *cryptex_key_key = &selected->key[0];
+  uint32_t *cryptex_key_iv = &selected->iv[0];
   uint64_t seed_encrypt[] = { *(uint64_t *)&seed[0],  *(uint64_t *)&seed[8]};
   size_t encrypted_size = 0;
   if(CCCrypt(kCCEncrypt, kCCAlgorithmAES128, 0, cryptex_key_key, kCCKeySizeAES128, cryptex_key_iv, seed_encrypt, sizeof(seed_encrypt), seed_encrypt, sizeof(seed_encrypt), &encrypted_size) != kCCSuccess || encrypted_size != sizeof(seed_encrypt)) {
@@ -1089,17 +1104,20 @@ uint8_t *x8A4_get_apnonce(uint32_t *apnonce_size) {
     x8A4_log_error("Failed to get IOAESAccelerator keys! (%d:0x%016llX)\n", keys_count, keys);
     return NULL;
   }
-  uint32_t chosen_key = 0x8A3;
-  uint32_t struct_size = sizeof(struct x8A4_accel_key);
-  for (int i = 0; i < keys_count; i++) {
-    struct x8A4_accel_key *cur_key = keys + (struct_size * i);
-    if (cur_key->key_id == chosen_key) {
-      keys = cur_key;
+  struct x8A4_accel_key *selected = NULL;
+  for (uint32_t i = 0; i < keys_count; ++i) {
+    if (keys[i].key_id == 0x8A3 && keys[i].generated == 1 &&
+        keys[i].key_sz == 128) {
+      selected = &keys[i];
       break;
     }
   }
-  uint32_t *entangle_key_key = &keys->key[0];
-  uint32_t *entangle_key_iv = &keys->iv[0];
+  if (!selected) {
+    x8A4_log_error("A valid 0x8A3 key was not found.\n", "");
+    return NULL;
+  }
+  uint32_t *entangle_key_key = &selected->key[0];
+  uint32_t *entangle_key_iv = &selected->iv[0];
   uint64_t gen_encrypt[] = { 0, generator_data};
   x8A4_log_debug("generator_data: 0x%016llX\n", generator_data);
   size_t encrypted_size = 0;
@@ -1205,44 +1223,49 @@ int x8A4_clear_apnonce_generator(void) {
  * @return          Pointer to keys(x8A4_accel_key array)
  */
 struct x8A4_accel_key *x8A4_get_ioaesaccelkeys(uint32_t *keys_count) {
-  if(!keys_count) {
-    x8A4_log_error("Failed to get IOAESAccelerator keys, no keys count output pointer set!\n",
-                   "");
+  if (!keys_count) return NULL;
+  *keys_count = 0;
+  const uint64_t kobject = get_ipc_kobject(get_io_aes_accel_service());
+  if (!kobject || !koffsets_cached) {
+    x8A4_log_error("IOAESAccelerator service or offsets unavailable.\n", "");
     return NULL;
   }
-  uint64_t kobject = get_ipc_kobject(get_io_aes_accel_service());
-  if (!kobject) {
-    x8A4_log_error("Failed to get kobject from IOAESAccelerator service!\n",
-                   "");
+
+  uint64_t kernel_keys = 0;
+  uint32_t count = 0;
+  if (kread(kobject + koffsets_cached->io_aes_accel_special_keys,
+            &kernel_keys, sizeof(kernel_keys)) || !kernel_keys ||
+      kread(kobject + koffsets_cached->io_aes_accel_special_keys_size,
+            &count, sizeof(count)) ||
+      !x8A4_accel_count_valid(count)) {
+    x8A4_log_error("IOAESAccelerator key table invalid or unavailable.\n", "");
     return NULL;
   }
-  uint64_t keys = 0;
-  x8A4_log_debug("kobject: 0x%016llX\n", kobject);
-  x8A4_log_debug("kobject + koffsets_cached->io_aes_accel_special_keys: 0x%016llX\n", kobject + koffsets_cached->io_aes_accel_special_keys);
-  if (kread(kobject + koffsets_cached->io_aes_accel_special_keys, &keys, 8) ||
-      keys == 0) {
-    x8A4_log_error("Failed to read io_aes_accel_special_keys from kobject: 0x%llX!\n", kobject);
-    return NULL;
-  }
-  x8A4_log_debug("kobject + koffsets_cached->io_aes_accel_special_keys_size: 0x%016llX\n", kobject + koffsets_cached->io_aes_accel_special_keys_size);
-  if (kread(kobject + koffsets_cached->io_aes_accel_special_keys_size,
-            keys_count, 4) ||
-      *keys_count == 0) {
-    x8A4_log_error("Failed to read io_aes_accel_special_keys_size from kobject: 0x%llX!\n", kobject);
-    return NULL;
-  }
-  size_t struct_size = sizeof(struct x8A4_accel_key);
-  struct x8A4_accel_key *out_keys = (struct x8A4_accel_key *)calloc(*keys_count, struct_size);
-  gc_cached[gc_count_cached++] = (uint64_t)out_keys;
-  x8A4_log_debug_error("gc_cached[gc_count_cached++]: %d val: 0x%016llX\n", __LINE__, out_keys);
-  x8A4_log_debug("keys: 0x%016llX keys count: %zu\n", keys, *keys_count);
-  for (int i = 0; i < *keys_count; i++) {
-    struct x8A4_accel_key *cur_key = (struct x8A4_accel_key *)(out_keys + (struct_size * i));
-    if(kread((keys + (struct_size * i)), cur_key, struct_size)) {
-      x8A4_log_debug_error("Failed to read special key: %d from keys: 0x%016llX!\n", i, (keys + (struct_size * i)));
-      continue;
+
+  struct x8A4_accel_key *out_keys = calloc(count, sizeof(*out_keys));
+  if (!out_keys) return NULL;
+
+  /* Kernel keys are byte addresses; local keys are typed structs. Never
+     multiply a typed pointer by sizeof(struct) a second time. */
+  for (uint32_t i = 0; i < count; ++i) {
+    size_t offset = 0;
+    if (!x8A4_accel_offset(count, i, sizeof(*out_keys), &offset) ||
+        kernel_keys > UINT64_MAX - (uint64_t)offset ||
+        kread(kernel_keys + (uint64_t)offset, &out_keys[i],
+              sizeof(*out_keys))) {
+      x8A4_log_error("IOAESAccelerator key read failed; discarding table.\n", "");
+      free(out_keys);
+      return NULL;
     }
   }
+
+  /* The legacy cleanup table holds 128 pointers. Fail closed on overflow. */
+  if (!gc_cached || gc_count_cached < 0 || gc_count_cached >= 128) {
+    free(out_keys);
+    return NULL;
+  }
+  gc_cached[gc_count_cached++] = (uint64_t)out_keys;
+  *keys_count = count;
   return out_keys;
 }
 
@@ -1524,32 +1547,39 @@ void x8A4_cli_clear_apnonce_generator(void) {
  * @param[in]       chosen_key
  */
 void x8A4_cli_get_accel_keys(uint32_t chosen_key) {
-  x8A4_log("Getting IOAESAccelerator keys...\n", "");
-  uint32_t keys_count = 0;
-  size_t struct_size = sizeof(struct x8A4_accel_key);
-  struct x8A4_accel_key *keys = x8A4_get_ioaesaccelkeys(&keys_count);
-  if(!keys) {
-    x8A4_log_error("Failed to get IOAESAccelerator Keys!\n", "");
+  if (chosen_key != 0x8A3 && chosen_key != 0x8A4) {
+    x8A4_log_error("Only explicitly requested 0x8A3 or 0x8A4 is supported.\n", "");
     return;
   }
-  x8A4_log("Done!\n", "");
-  for (int i = 0; i < keys_count; i++) {
-    struct x8A4_accel_key *cur_key = keys + (struct_size * i);
-    if(chosen_key && cur_key->key_id != chosen_key) {
-      continue;
-    }
-    x8A4_log("Got key (0x%04X)\n", cur_key->key_id);
-    x8A4_log("Key(0x%04X) Index: 0x%04X\n", cur_key->key_id, i);
-    x8A4_log("Key(0x%04X) Generated: 0x%04X\n", cur_key->key_id, cur_key->generated);
-    x8A4_log("Key(0x%04X) Size: 0x%04X\n", cur_key->key_id, cur_key->key_sz);
-    x8A4_log("Key(0x%04X) KEY: 0x%08X%08X%08X%08X%\n", cur_key->key_id, __builtin_bswap32(cur_key->key[0]), __builtin_bswap32(cur_key->key[1]), __builtin_bswap32(cur_key->key[2]), __builtin_bswap32(cur_key->key[3]));
-    x8A4_log("Key(0x%04X) IV: 0x%08X%08X%08X%08X%\n", cur_key->key_id, __builtin_bswap32(cur_key->iv[0]), __builtin_bswap32(cur_key->iv[1]), __builtin_bswap32(cur_key->iv[2]), __builtin_bswap32(cur_key->iv[3]));
-    if(chosen_key && cur_key->key_id == chosen_key) {
+  uint32_t count = 0;
+  struct x8A4_accel_key *keys = x8A4_get_ioaesaccelkeys(&count);
+  if (!keys) {
+    x8A4_log_error("Cannot safely inspect accelerator keys.\n", "");
+    return;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    const struct x8A4_accel_key *entry = &keys[i];
+    if (entry->key_id != chosen_key) continue;
+    if (entry->generated != 1 || entry->key_sz != 128) {
+      x8A4_log_error("Matching key has invalid metadata.\n", "");
       break;
     }
+    x8A4_log("Key(0x%04X) Index: %u\n", entry->key_id, i);
+    x8A4_log("Key(0x%04X) Generated: %u\n", entry->key_id, entry->generated);
+    x8A4_log("Key(0x%04X) Size: %u\n", entry->key_id, entry->key_sz);
+    x8A4_log("Key(0x%04X) KEY: 0x%08X%08X%08X%08X\n", entry->key_id,
+             __builtin_bswap32(entry->key[0]), __builtin_bswap32(entry->key[1]),
+             __builtin_bswap32(entry->key[2]), __builtin_bswap32(entry->key[3]));
+    x8A4_log("Key(0x%04X) IV: 0x%08X%08X%08X%08X\n", entry->key_id,
+             __builtin_bswap32(entry->iv[0]), __builtin_bswap32(entry->iv[1]),
+             __builtin_bswap32(entry->iv[2]), __builtin_bswap32(entry->iv[3]));
+    break;
   }
-  gc_d_cached[gc_d_count_cached++] = (uint64_t)keys;
-  free(keys);
+  /* Preserve legacy cleanup ownership: remove from global tracking on exit. */
+  if (gc_d_cached && gc_d_count_cached >= 0 && gc_d_count_cached < 128) {
+    gc_d_cached[gc_d_count_cached++] = (uint64_t)keys;
+    free(keys);
+  }
 }
 
 /**
