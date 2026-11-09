@@ -50,6 +50,10 @@ int tfp0_init(void) {
   uint32_t read_bytes = 0;
   uint64_t base = 0;
   int ret = kbase(&base);
+  if (ret != 0) {
+    x8A4_log_error("Kernel read provider kbase failed.\n", "");
+    return -1;
+  }
   x8A4_log_debug("kbase ret: %d kbase: 0x%016llX!\n", ret, base);
   if (!base) {
     base = gXPF.kernelBase + get_slide();
@@ -66,7 +70,9 @@ int tfp0_init(void) {
  * @return          Zero on XPF init success
  */
 int xpf_init(void) {
-  int ret = xpf_start_with_kernel_path(get_kernel_path());
+  const char *path = get_kernel_path();
+  if (!path) return -1;
+  int ret = xpf_start_with_kernel_path(path);
   const char *err = xpf_get_error();
   if(err) {
     x8A4_log_error("Can't proceed with kernel init, failed to start xpf with kernel: \"%s\" error: %s\n", get_kernel_path(), err);
@@ -84,48 +90,35 @@ int xpf_init(void) {
  * @return          Kernel path
  */
 const char *get_kernel_path(void) {
-  if (kernel_path_cached) {
-    return kernel_path_cached;
-  }
-  const char *preboot_path = "/private/preboot/";
-  if (access(preboot_path, F_OK) != 0) {
-    x8A4_log_error("Can't proceed with kernel init, %s not found!\n", preboot_path);
+  if (kernel_path_cached) return kernel_path_cached;
+  const uint8_t *hash = get_boot_manifest_hash_registry();
+  const uint32_t hash_len = get_boot_manifest_hash_len();
+  if (!hash || (hash_len != CC_SHA1_DIGEST_LENGTH &&
+                hash_len != CC_SHA384_DIGEST_LENGTH)) {
+    x8A4_log_error("Unsupported or unavailable boot manifest hash.\n", "");
     return NULL;
   }
-  const uint32_t *boot_manifest_hash = (const uint32_t *)get_boot_manifest_hash_registry();
-  if(!boot_manifest_hash) {
-    x8A4_log_error("Can't proceed with kernel init, failed to get boot manifest hash!\n", "");
+  char hex[2 * CC_SHA384_DIGEST_LENGTH + 1];
+  static const char digits[] = "0123456789ABCDEF";
+  for (uint32_t i = 0; i < hash_len; i++) {
+    hex[2*i] = digits[hash[i] >> 4];
+    hex[2*i + 1] = digits[hash[i] & 15];
+  }
+  hex[2*hash_len] = '\0';
+  const char *fmt = "/private/preboot/%s/System/Library/Caches/"
+                    "com.apple.kernelcaches/kernelcache";
+  char *path = calloc(1, 256);
+  if (!path) return NULL;
+  int n = snprintf(path, 256, fmt, hex);
+  if (n < 0 || n >= 256 || access(path, R_OK) != 0) {
+    x8A4_log_error("Preboot kernelcache path missing or inaccessible.\n", "");
+    free(path);
     return NULL;
   }
-  char boot_manifest_hash_str[104];
-  uint32_t *boot_manifest_hash_str_ptr = (uint32_t *)boot_manifest_hash_str;
-  int cnt = 0;
-  int sz = 0;
-  int end = 0;
-  int hash_len = get_hash_len();
-  if(hash_len == CC_SHA1_DIGEST_LENGTH) {
-    cnt = 10;
-    sz = 20;
-    end = 40;
-  } else if(hash_len == CC_SHA384_DIGEST_LENGTH) {
-    cnt = 10;
-    sz = 32;
-    end = 96;
-  }
-  int j = 0;
-  for(int i = 0; i < cnt; i++) {
-    snprintf((void *)&boot_manifest_hash_str_ptr[j], sz, "%08X%08X%08X%08X\n", __builtin_bswap32(boot_manifest_hash[i + 0]), __builtin_bswap32(boot_manifest_hash[i + 1]), __builtin_bswap32(boot_manifest_hash[i + 2]), __builtin_bswap32(boot_manifest_hash[i + 3]));
-    j+=2;
-  }
-  boot_manifest_hash_str[end] = '\0';
-
-  const char *format = "/private/preboot/%s/System/Library/Caches/"
-                       "com.apple.kernelcaches/kernelcache";
-  char *kernel_path = (char *)calloc(1, 256);
-  snprintf(kernel_path, 256, format, boot_manifest_hash_str);
-  kernel_path_cached = kernel_path;
-  return (const char *)kernel_path;
+  kernel_path_cached = path;
+  return path;
 }
+
 #if 0
 /**
  * @brief           Reads mntinfo firmware entry to find preboot kernel path

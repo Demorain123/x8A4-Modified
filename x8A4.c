@@ -791,7 +791,7 @@ uint8_t *x8A4_get_cryptex_nonce(uint32_t *nonce_size) {
   struct x8A4_accel_key *selected = NULL;
   for (uint32_t i = 0; i < keys_count; ++i) {
     if (keys[i].key_id == 0x8A4 && keys[i].generated == 1 &&
-        keys[i].key_sz == 128) {
+        (keys[i].key_sz == 16 || keys[i].key_sz == 128)) {
       selected = &keys[i];
       break;
     }
@@ -986,7 +986,7 @@ uint8_t *x8A4_get_apnonce(uint32_t *apnonce_size) {
   struct x8A4_accel_key *selected = NULL;
   for (uint32_t i = 0; i < keys_count; ++i) {
     if (keys[i].key_id == 0x8A3 && keys[i].generated == 1 &&
-        keys[i].key_sz == 128) {
+        (keys[i].key_sz == 16 || keys[i].key_sz == 128)) {
       selected = &keys[i];
       break;
     }
@@ -1353,7 +1353,7 @@ void x8A4_cli_get_accel_keys(uint32_t chosen_key) {
   for (uint32_t i = 0; i < count; ++i) {
     const struct x8A4_accel_key *entry = &keys[i];
     if (entry->key_id != chosen_key) continue;
-    if (entry->generated != 1 || entry->key_sz != 128) {
+    if (entry->generated != 1 || (entry->key_sz != 16 && entry->key_sz != 128)) {
       x8A4_log_error("Matching key has invalid metadata.\n", "");
       break;
     }

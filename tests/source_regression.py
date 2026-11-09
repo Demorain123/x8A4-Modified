@@ -36,7 +36,27 @@ for forbidden in (
 ):
     assert forbidden not in cli, f"Mutation API exposed by CLI: {forbidden}"
 
-assert "entry->key_sz != 128" in src
+assert "(entry->key_sz != 16 && entry->key_sz != 128)" in src
 assert "X8A4_ENABLE_LIVE_KEY_READ" in cli
 assert "live kernel key reading disabled" in cli
+for path, forbidden in {
+    "Kernel/nvram.c": ("kwrite(", "set_nvram_entry_bytes("),
+    "Kernel/kernel.c": ("IOConnectCallStructMethod(", "io_generate_apnonce(", "io_clear_apnonce("),
+    "Registry/registry.c": ("IORegistryEntrySetCFProperty(", "int set_nvram_entry("),
+    "Services/services.c": ("get_apple_mobile_ap_nonce_service(",),
+}.items():
+    current = (root / path).read_text()
+    for marker in forbidden:
+        assert marker not in current, f"Forbidden mutation implementation: {path}: {marker}"
+
+object_file = (root / "Kernel/osobject.c").read_text()
+assert "&dict_size, sizeof(dict_size)" in object_file
+assert "key_len >= PATH_MAX" in object_file
+assert "char key_string[PATH_MAX] = {0}" in object_file
+offsets = (root / "Kernel/offsets.c").read_text()
+assert "valid_resolved_offset" in offsets
+assert "return -1;" in offsets
+kernel = (root / "Kernel/kernel.c").read_text()
+assert "get_boot_manifest_hash_len()" in kernel
+assert "Preboot kernelcache path missing" in kernel
 print("PASS: source regression checks (not live-device validation)")

@@ -142,7 +142,7 @@ uint8_t *get_nvram_entry_bytes(uint64_t nvram_dict, const char *key, enum os_typ
     x8A4_log_error("Failed to get entry address from nvram dict!\n", "");
     return NULL;
   }
-  if (!*out_size) {
+  if (!*out_size || *out_size > 1024U * 1024U) {
     x8A4_log_error("Failed to entry size from nvram dict!\n", "");
     return NULL;
   }
@@ -151,12 +151,21 @@ uint8_t *get_nvram_entry_bytes(uint64_t nvram_dict, const char *key, enum os_typ
     x8A4_log_debug("out_size: 0x%016llX\n",(uint64_t)out_size);
     x8A4_log_debug("out_size: 0x%08X\n", *out_size);
   }
-  uint8_t *entry_bytes = (uint8_t *)calloc(1, *out_size + 1);
+  uint8_t *entry_bytes = (uint8_t *)calloc(1, (size_t)*out_size + 1);
+  if (!entry_bytes) {
+    x8A4_log_error("Unable to allocate NVRAM entry buffer.\n", "");
+    return NULL;
+  }
   int ret = kread(entry_addr, entry_bytes, *out_size);
   if (ret) {
     if (entry_bytes)
       free(entry_bytes);
     x8A4_log_error("Failed to read entry bytes from nvram dict! (%d:%s)\n", ret, strerror(ret));
+    return NULL;
+  }
+  if (!gc_cached || gc_count_cached < 0 || gc_count_cached >= 128) {
+    free(entry_bytes);
+    x8A4_log_error("NVRAM allocation tracking full.\n", "");
     return NULL;
   }
   gc_cached[gc_count_cached++] = (uint64_t)entry_bytes;

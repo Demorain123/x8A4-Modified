@@ -45,5 +45,18 @@ jobs:
             echo "STOP: mutating x8A4 CLI import detected"
             exit 1
           fi
+          # Scan the whole dylib, not only the restricted CLI.
+          if nm -arch arm64 -u build/libx8A4.1.dylib | grep -Ei '_(kwrite|physwrite|kcall|kmalloc|kdealloc|IORegistryEntrySetCFProperty|IOConnectCallStructMethod)($|[^[:alnum:]_])'; then
+            echo "STOP: mutating kernel/NVRAM API imported by library"
+            exit 1
+          fi
+          if nm -arch arm64 -g build/libx8A4.1.dylib | grep -E '_x8A4_(set_apnonce_generator|clear_apnonce_generator|sync_nvram|set_boot_nonce|set_nonce_seeds|cli_set_cryptex_seed)'; then
+            echo "STOP: mutating x8A4 API remains exported"
+            exit 1
+          fi
+          if ldid -e build/x8A4_CLI | grep -E 'AppleMobileApNonceUserClient|com.apple.security.iokit-user-client-class'; then
+            echo "STOP: AppleMobileApNonce entitlement remains"
+            exit 1
+          fi
           file build/x8A4_CLI build/libx8A4.1.dylib
           echo "PASS: experimental ARM64 build; NOT an on-device safety approval"
