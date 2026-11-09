@@ -94,6 +94,8 @@ target_link_libraries(x8A4
 
 add_executable(x8A4_CLI x8A4_CLI.c)
 if(X8A4_ENABLE_LIVE_KEY_READ)
+    # Gate the shared library APIs as well as the command-line front end.
+    target_compile_definitions(x8A4 PRIVATE X8A4_ENABLE_LIVE_KEY_READ=1)
     target_compile_definitions(x8A4_CLI PRIVATE X8A4_ENABLE_LIVE_KEY_READ=1)
 endif()
 

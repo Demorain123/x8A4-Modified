@@ -19,6 +19,7 @@
 #include <x8A4/x8A4.h>
 #include <x8A4/Kernel/kpf.h>
 #include <libkrw.h>
+#include <sys/sysctl.h>
 #include <x8A4/key_bounds.h>
 #include <x8A4/target_key.h>
 #include <x8A4/key_table_reader.h>
@@ -26,6 +27,35 @@
 static int x8A4_key_table_kread(uint64_t addr, void *out, size_t size) {
   return kread(addr, out, size);
 }
+
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+/* Enforce the target identity inside the library too: public API callers can
+ * bypass x8A4_CLI.c. This guards version selection, not structure offsets.
+ */
+static int x8A4_target_runtime_matches(void) {
+  char model[64] = {0};
+  char osrelease[64] = {0};
+  char build[64] = {0};
+  size_t size = sizeof(model);
+  if (geteuid() != 0 ||
+      sysctlbyname("hw.machine", model, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(model) || model[size - 1] != '\0' ||
+      strcmp(model, "iPad13,4") != 0)
+    return 0;
+  size = sizeof(osrelease);
+  if (sysctlbyname("kern.osrelease", osrelease, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(osrelease) || osrelease[size - 1] != '\0' ||
+      strcmp(osrelease, "23.3.0") != 0)
+    return 0;
+  size = sizeof(build);
+  if (sysctlbyname("kern.osversion", build, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(build) || build[size - 1] != '\0' ||
+      strcmp(build, "21D61") != 0)
+    return 0;
+  return 1;
+}
+#endif
+
 
 _Static_assert(sizeof(struct x8A4_accel_key) == 52,
                "IOAESAccelerator key record layout changed");
@@ -70,6 +100,12 @@ int x8A4_init(void) {
     x8A4_log_error("x8A4 Requires running with sudo!\n", "");
     return -1;
   }
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+  if (!x8A4_target_runtime_matches()) {
+    x8A4_log_error("STOP: expected root on iPad13,4 / Darwin 23.3.0 / build 21D61; no kernel access.\n", "");
+    return -1;
+  }
+#endif
   if(init_done) {
     return 0;
   }
@@ -1044,18 +1080,32 @@ uint8_t *x8A4_get_apnonce(uint32_t *apnonce_size) {
 struct x8A4_accel_key *x8A4_get_ioaesaccelkeys(uint32_t *keys_count) {
   if (!keys_count) return NULL;
   *keys_count = 0;
+#if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ)
+  x8A4_log_error("STOP: live kernel key reading disabled in this safety build.\n", "");
+  return NULL;
+#else
+  if (!init_done || !koffsets_cached || !x8A4_target_runtime_matches()) {
+    x8A4_log_error("STOP: initialize on the exact approved target before key reads.\n", "");
+    return NULL;
+  }
   const uint64_t kobject = get_ipc_kobject(get_io_aes_accel_service());
-  if (!kobject || !koffsets_cached) {
-    x8A4_log_error("IOAESAccelerator service or offsets unavailable.\n", "");
+  if (!kobject) {
+    x8A4_log_error("IOAESAccelerator service unavailable.\n", "");
     return NULL;
   }
 
   uint64_t kernel_keys = 0;
   uint32_t count = 0;
-  if (kread(kobject + koffsets_cached->io_aes_accel_special_keys,
-            &kernel_keys, sizeof(kernel_keys)) || !kernel_keys ||
-      kread(kobject + koffsets_cached->io_aes_accel_special_keys_size,
-            &count, sizeof(count)) ||
+  uint64_t key_ptr_address = 0, count_address = 0;
+  if (!x8A4_kernel_read_span(kobject,
+                             koffsets_cached->io_aes_accel_special_keys,
+                             sizeof(kernel_keys), &key_ptr_address) ||
+      !x8A4_kernel_read_span(kobject,
+                             koffsets_cached->io_aes_accel_special_keys_size,
+                             sizeof(count), &count_address) ||
+      kread(key_ptr_address, &kernel_keys, sizeof(kernel_keys)) ||
+      !kernel_keys ||
+      kread(count_address, &count, sizeof(count)) ||
       !x8A4_accel_count_valid(count)) {
     x8A4_log_error("IOAESAccelerator key table invalid or unavailable.\n", "");
     return NULL;
@@ -1066,6 +1116,7 @@ struct x8A4_accel_key *x8A4_get_ioaesaccelkeys(uint32_t *keys_count) {
 
   if (x8A4_read_accel_records(kernel_keys, out_keys, count,
                               sizeof(*out_keys), x8A4_key_table_kread) != 0) {
+    memset(out_keys, 0, (size_t)count * sizeof(*out_keys));
     x8A4_log_error("Key table read failed; discarding buffer.\n", "");
     free(out_keys);
     return NULL;
@@ -1073,12 +1124,14 @@ struct x8A4_accel_key *x8A4_get_ioaesaccelkeys(uint32_t *keys_count) {
 
   /* The legacy cleanup table holds 128 pointers. Fail closed on overflow. */
   if (!gc_cached || gc_count_cached < 0 || gc_count_cached >= 128) {
+    memset(out_keys, 0, (size_t)count * sizeof(*out_keys));
     free(out_keys);
     return NULL;
   }
   gc_cached[gc_count_cached++] = (uint64_t)out_keys;
   *keys_count = count;
   return out_keys;
+#endif
 }
 
 /**
@@ -1383,6 +1436,15 @@ static int x8A4_lookup_target_key(uint32_t chosen_key,
 }
 
 int x8A4_cli_get_accel_keys(uint32_t chosen_key) {
+#if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ)
+  (void)chosen_key;
+  x8A4_log_error("STOP: live kernel key reading disabled in this safety build.\n", "");
+  return 78;
+#else
+  if (!init_done || !koffsets_cached || !x8A4_target_runtime_matches()) {
+    x8A4_log_error("STOP: initialize on the exact approved target before key reads.\n", "");
+    return -1;
+  }
   if (chosen_key != 0x8A3 && chosen_key != 0x8A4) {
     x8A4_log_error("Only 0x8A3 or 0x8A4 may be requested.\n", "");
     return -1;
@@ -1408,6 +1470,7 @@ int x8A4_cli_get_accel_keys(uint32_t chosen_key) {
            __builtin_bswap32(key.iv[2]), __builtin_bswap32(key.iv[3]));
   memset(&key, 0, sizeof(key));
   return 0;
+#endif
 }
 
 /**

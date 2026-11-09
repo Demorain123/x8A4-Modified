@@ -37,6 +37,11 @@ for forbidden in (
 assert "entry.key_sz != 16 && entry.key_sz != 128" in (root / "Include/x8A4/target_key.h").read_text()
 assert "X8A4_ENABLE_LIVE_KEY_READ" in cli
 assert "live kernel key reading disabled" in cli
+cmake = (root / "CMakeLists.txt").read_text()
+assert "target_compile_definitions(x8A4 PRIVATE X8A4_ENABLE_LIVE_KEY_READ=1)" in cmake
+assert "static int x8A4_target_runtime_matches(void)" in src
+init_start = src.index("int x8A4_init(void) {")
+assert src.index("x8A4_target_runtime_matches()", init_start) < src.index("if (xpf_init())", init_start)
 # The CLI must use the single-key stack scanner, not allocate the entire
 # kernel accelerator table or put secret buffers into the legacy GC lists.
 start = src.index("int x8A4_cli_get_accel_keys(uint32_t chosen_key) {")
