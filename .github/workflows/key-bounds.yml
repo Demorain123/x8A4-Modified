@@ -1,0 +1,25 @@
+name: Key boundary safety checks
+
+on:
+  push:
+    branches:
+      - 'fix/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  key-bounds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile standalone fixture with sanitizers
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/key_bounds_test.c -o /tmp/x8a4-key-bounds-test
+          /tmp/x8a4-key-bounds-test
+      - name: Regression checks for unsafe pointer math and CLI write commands
+        run: python3 tests/source_regression.py
