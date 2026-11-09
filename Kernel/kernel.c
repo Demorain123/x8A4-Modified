@@ -525,64 +525,12 @@ int kernel_test(void) {
  * @brief           Generates a new apnonce and generator via AppleMobileApNonce UserClient
  * @return          Zero on success
  */
-int io_generate_apnonce(void) {
-  io_service_t apnonce_service = get_apple_mobile_ap_nonce_service();
-  if (MACH_PORT_VALID(apnonce_service) == 0) {
-    x8A4_log_error("Port 0x%X for apnonce service is invalid!\n", apnonce_service);
-    return -1;
-  }
-  uint8_t nonce[CC_SHA384_DIGEST_LENGTH];
-  size_t nonce_size = CC_SHA384_DIGEST_LENGTH;
-  kern_return_t ret = IOConnectCallStructMethod(
-      apnonce_service, APPLE_MOBILE_AP_NONCE_GENERATE_NONCE_SEL, NULL, 0, nonce,
-      &nonce_size);
-  if (ret != KERN_SUCCESS) {
-    x8A4_log_error("!IOConnectCallStructMethod APPLE_MOBILE_AP_NONCE_GENERATE_NONCE_SEL 0x%08X(%s)", ret, mach_error_string(ret));
-    return -1;
-  }
-  if (options_cached) {
-    IOObjectRelease(options_cached);
-    options_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service2_cached) {
-    IOServiceClose(apple_mobile_ap_nonce_service2_cached);
-    apple_mobile_ap_nonce_service2_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service_cached) {
-    IOObjectRelease(apple_mobile_ap_nonce_service_cached);
-    apple_mobile_ap_nonce_service_cached = IO_OBJECT_NULL;
-  }
-  return 0;
-}
+/* Removed mutation API io_generate_apnonce: read-only research build. */
+
 
 /**
  * @brief           Clears the apnonce and generator via AppleMobileApNonce UserClient
  * @return          Zero on success
  */
-int io_clear_apnonce(void) {
-  io_service_t apnonce_service = get_apple_mobile_ap_nonce_service();
-  if (MACH_PORT_VALID(apnonce_service) == 0) {
-    x8A4_log_error("Port 0x%08X for apnonce service is invalid!\n", apnonce_service);
-    return -1;
-  }
-  kern_return_t ret = IOConnectCallStructMethod(
-      apnonce_service, APPLE_MOBILE_AP_NONCE_CLEAR_NONCE_SEL, NULL, 0, NULL,
-      NULL);
-  if (ret != KERN_SUCCESS) {
-    x8A4_log_error("Failed IOConnectCallStructMethod APPLE_MOBILE_AP_NONCE_CLEAR_NONCE_SEL! (0x%08:X%s)", ret, mach_error_string(ret));
-    return -1;
-  }
-  if (options_cached) {
-    IOObjectRelease(options_cached);
-    options_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service2_cached) {
-    IOServiceClose(apple_mobile_ap_nonce_service2_cached);
-    apple_mobile_ap_nonce_service2_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service_cached) {
-    IOObjectRelease(apple_mobile_ap_nonce_service_cached);
-    apple_mobile_ap_nonce_service_cached = IO_OBJECT_NULL;
-  }
-  return 0;
-}
+/* Removed mutation API io_clear_apnonce: read-only research build. */
+
