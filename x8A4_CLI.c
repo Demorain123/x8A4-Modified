@@ -10,6 +10,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/sysctl.h>
+#include <unistd.h>
 
 static void help(const char *name) {
   printf("Usage: %s --help | --get-accel-key 0x8A3|0x8A4\n", name);
@@ -48,12 +51,29 @@ int main(int argc, char **argv) {
   fputs("STOP: live kernel key reading disabled in this safety build.\n", stderr);
   return 78;
 #else
+  /*
+   * A research-only, M1-specific fail-closed gate: reject wrong models or
+   * kernels before invoking libkrw. This is NOT proof that offsets are right.
+   */
+  char model[64] = {0};
+  char osrelease[64] = {0};
+  size_t size = sizeof(model);
+  if (geteuid() != 0 ||
+      sysctlbyname("hw.machine", model, &size, NULL, 0) != 0 ||
+      strcmp(model, "iPad13,4") != 0) {
+    fputs("STOP: root and iPad13,4 required for this research build.\n", stderr);
+    return 1;
+  }
+  size = sizeof(osrelease);
+  if (sysctlbyname("kern.osrelease", osrelease, &size, NULL, 0) != 0 ||
+      strcmp(osrelease, "23.3.0") != 0) {
+    fputs("STOP: expected iPadOS 17.3.1 / Darwin 23.3.0; no reads.\n", stderr);
+    return 1;
+  }
   if (x8A4_init() != 0) {
     fputs("STOP: kernel access initialization failed.\n", stderr);
     return 1;
   }
-  x8A4_cli_get_accel_keys(requested);
-  /* A success exit alone is not evidence of a valid device-specific key. */
-  return 0;
+  return x8A4_cli_get_accel_keys(requested) == 0 ? 0 : 1;
 #endif
 }

@@ -35,3 +35,16 @@ This repository was forked from `Cryptiiiic/x8A4` at upstream commit `99a79f70bc
 5. If actual 0x8A3/0x8A4 values are safely obtained, validate locally with a separately maintained AES/SHA-384 implementation and preserve in encrypted offline archives. Never post secret values publicly.
 
 **This draft intentionally remains unmerged.**
+
+## Stage 2 — source and build hardening (pending full M1 runtime audit)
+
+- Removed NVRAM write, boot-nonce set/clear, and AppleMobileApNonce mutation entry points from the library and declarations, not just the CLI.
+- Repaired an 8-byte kernel read into a 4-byte OS dictionary size; bounded dictionary entry scans and key-name lengths.
+- Bounded NVRAM buffer allocations and added allocation checks.
+- Failed closed on absent XPF offsets, missing kernelcache path, or unsupported boot-manifest-hash length.
+- Added a bounded kernel process-list walk to prevent infinite loops on bad pointers.
+- Restricted the opt-in live CLI to root, iPad13,4 and Darwin 23.3.0; it is not enabled in standard builds.
+- Key-reader CLI now returns failure when the requested key is missing or invalid, rather than treating missing output as success.
+- macOS CI examines the whole dynamic library's write-capable imports; this is a dependency-symbol check, not proof that the jailbreak kernel-read provider cannot modify state.
+
+**Still not ready for on-device installation:** XPF structure and IOAESAccelerator offsets must be verified for the exact M1 17.3.1 kernel, library allocation tracking audited, and emitted keys independently cross-checked. Never replace system-installed packages with this experiment.

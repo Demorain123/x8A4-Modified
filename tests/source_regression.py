@@ -59,4 +59,9 @@ assert "return -1;" in offsets
 kernel = (root / "Kernel/kernel.c").read_text()
 assert "get_boot_manifest_hash_len()" in kernel
 assert "Preboot kernelcache path missing" in kernel
+assert "int x8A4_cli_get_accel_keys(uint32_t chosen_key)" in src
+assert "return x8A4_cli_get_accel_keys(requested) == 0 ? 0 : 1;" in cli
+assert 'strcmp(model, "iPad13,4")' in cli
+assert 'strcmp(osrelease, "23.3.0")' in cli
+assert "inspected < 262144" in kernel
 print("PASS: source regression checks (not live-device validation)")

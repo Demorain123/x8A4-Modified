@@ -1339,21 +1339,23 @@ void x8A4_cli_get_apnonce(void) {
  * @brief           CLI get IOAESAccelerator keys
  * @param[in]       chosen_key
  */
-void x8A4_cli_get_accel_keys(uint32_t chosen_key) {
+int x8A4_cli_get_accel_keys(uint32_t chosen_key) {
   if (chosen_key != 0x8A3 && chosen_key != 0x8A4) {
     x8A4_log_error("Only explicitly requested 0x8A3 or 0x8A4 is supported.\n", "");
-    return;
+    return -1;
   }
   uint32_t count = 0;
   struct x8A4_accel_key *keys = x8A4_get_ioaesaccelkeys(&count);
   if (!keys) {
     x8A4_log_error("Cannot safely inspect accelerator keys.\n", "");
-    return;
+    return -1;
   }
+  int status = -1;
   for (uint32_t i = 0; i < count; ++i) {
     const struct x8A4_accel_key *entry = &keys[i];
     if (entry->key_id != chosen_key) continue;
-    if (entry->generated != 1 || (entry->key_sz != 16 && entry->key_sz != 128)) {
+    if (entry->generated != 1 ||
+        (entry->key_sz != 16 && entry->key_sz != 128)) {
       x8A4_log_error("Matching key has invalid metadata.\n", "");
       break;
     }
@@ -1366,13 +1368,17 @@ void x8A4_cli_get_accel_keys(uint32_t chosen_key) {
     x8A4_log("Key(0x%04X) IV: 0x%08X%08X%08X%08X\n", entry->key_id,
              __builtin_bswap32(entry->iv[0]), __builtin_bswap32(entry->iv[1]),
              __builtin_bswap32(entry->iv[2]), __builtin_bswap32(entry->iv[3]));
+    status = 0;
     break;
   }
-  /* Preserve legacy cleanup ownership: remove from global tracking on exit. */
+  if (status) x8A4_log_error("Requested key not found or failed validation.\n", "");
+  /* Mark the original allocation as freed so x8A4_free will not free it twice.
+   * Otherwise defer freeing until x8A4_free, preserving ownership safety. */
   if (gc_d_cached && gc_d_count_cached >= 0 && gc_d_count_cached < 128) {
     gc_d_cached[gc_d_count_cached++] = (uint64_t)keys;
     free(keys);
   }
+  return status;
 }
 
 /**

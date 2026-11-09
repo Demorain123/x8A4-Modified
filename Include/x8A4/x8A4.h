@@ -139,7 +139,7 @@ void x8A4_cli_get_cryptex_seed(void);
 void x8A4_cli_get_cryptex_nonce(void);
 void x8A4_cli_get_apnonce_generator(void);
 void x8A4_cli_get_apnonce(void);
-void x8A4_cli_get_accel_keys(uint32_t chosen_key);
+int x8A4_cli_get_accel_keys(uint32_t chosen_key);
 void x8A4_cli_get_nonce_seeds(void);
 
 /* Cached Variables */

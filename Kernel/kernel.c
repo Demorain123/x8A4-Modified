@@ -261,15 +261,17 @@ uint64_t get_our_proc(void) {
   if (our_proc_cached) {
     return our_proc_cached;
   }
-  pid_t our_pid = getpid();
+  const pid_t our_pid = getpid();
   pid_t pid = 0;
   uint64_t proc = koffsets_cached->all_proc + get_slide();
   bool found = false;
-  while (!kread(proc + koffsets_cached->proc_list_next, (void *)&proc, 8)) {
-    int ret = kread(proc + koffsets_cached->proc_pid, (void *)&pid, 4);
-    if (ret) {
-      continue;
-    }
+  /* Reject cyclic/broken lists instead of looping indefinitely. */
+  for (uint32_t inspected = 0; inspected < 262144 && proc; ++inspected) {
+    uint64_t next = 0;
+    if (kread(proc + koffsets_cached->proc_list_next, &next, sizeof(next)) ||
+        !next || next == proc) break;
+    proc = next;
+    if (kread(proc + koffsets_cached->proc_pid, &pid, sizeof(pid))) break;
     if (pid == our_pid) {
       found = true;
       break;

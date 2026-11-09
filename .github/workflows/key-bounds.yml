@@ -60,3 +60,14 @@ jobs:
           fi
           file build/x8A4_CLI build/libx8A4.1.dylib
           echo "PASS: experimental ARM64 build; NOT an on-device safety approval"
+      - name: Compile opt-in code path for syntax validation only
+        run: |
+          # This build is NOT packaged, installed, run or uploaded anywhere.
+          cmake -S . -B build-live-syntax \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DRELEASE=ON \
+            -DX8A4_ENABLE_LIVE_KEY_READ=ON
+          cmake --build build-live-syntax --parallel 2
+          echo "PASS: opt-in code compiles; M1 runtime NOT verified"
