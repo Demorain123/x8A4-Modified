@@ -103,14 +103,6 @@ void x8A4_free(void) {
   if (domains_cached) {
     free(domains_cached);
   }
-  if (apple_mobile_ap_nonce_service2_cached != IO_OBJECT_NULL) {
-    x8A4_log_debug("Closing apple_mobile_ap_nonce_service2_cached\n", "");
-    IOServiceClose(apple_mobile_ap_nonce_service2_cached);
-  }
-  if(apple_mobile_ap_nonce_service_cached != IO_OBJECT_NULL) {
-    x8A4_log_debug("Releasing apple_mobile_ap_nonce_service_cached\n", "");
-    IOObjectRelease(apple_mobile_ap_nonce_service_cached);
-  }
   if(kernel_path_cached) {
     free(kernel_path_cached);
   }
@@ -838,39 +830,8 @@ uint8_t *x8A4_get_cryptex_nonce(uint32_t *nonce_size) {
  * @brief           Syncs nvram ram with a list of keys
  * @return          Zero on success
  */
-int x8A4_sync_nvram(void) {
-  const char *delete_me_key = "delete_me_key";
-  const char *delete_me_val = "delete_me_val";
-  int ret = 0;
-  const char *key_list[] = {
-      kBootNoncePropertyKey,
-      kNonceSeedsPropertyKey,
-      kKRNC1BTPropertyKey
-  };
-  for(int i = 0; i < 3; i++) {
-    ret = set_nvram_entry(get_dtre_options(), delete_me_key, delete_me_val);
-    if (ret) {
-      x8A4_log_error("Failed to sync nvram, set nvram(%s:%s) returned NULL!",
-                     delete_me_key, delete_me_val);
-      return -1;
-    }
-    ret = set_nvram_entry(get_dtre_options(), kIONVRAMDeletePropertyKey,
-                          delete_me_key);
-    if (ret) {
-      x8A4_log_error("Failed to sync nvram, set nvram(%s:%s) returned NULL!",
-                     kIONVRAMDeletePropertyKey, delete_me_key);
-      return -1;
-    }
-    ret = set_nvram_entry(get_dtre_options(), kIONVRAMForceSyncNowPropertyKey,
-                          key_list[i]);
-    if (ret) {
-      x8A4_log_error("Failed to sync nvram, set nvram(%s:%s) returned NULL!",
-                     kIONVRAMForceSyncNowPropertyKey, key_list[i]);
-      return -1;
-    }
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_sync_nvram: read-only research build. */
+
 
 /**
  * @brief           Get boot-nonce OS dict variant
@@ -899,27 +860,8 @@ uint8_t *x8A4_get_boot_nonce_os_dict(uint32_t *generator_size) {
  * @param[out]      generator_size
  * @return
  */
-int x8A4_set_boot_nonce_os_dict(uint8_t *generator, uint32_t generator_size) {
-  if (!generator) {
-    x8A4_log_error("Failed to set boot-nonce, out generator pointer is NULL!\n", "");
-    return -1;
-  }
-  if (!generator_size) {
-    x8A4_log_error("Failed to set boot-nonce, out generator size pointer is NULL!\n", "");
-    return -1;
-  }
-  uint64_t nvram_dict = get_service_nvram_dict(get_dtre_options());
-  if (!nvram_dict) {
-    x8A4_log_error("Failed to get boot-nonce, nvram dict is NULL!\n", "");
-    return -1;
-  }
-  int ret = set_nvram_entry_bytes(nvram_dict, kBootNoncePropertyKey, generator, generator_size, OS_STRING);
-  if (ret) {
-    x8A4_log_error("Failed to set boot-nonce!\n", "");
-    return -1;
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_set_boot_nonce_os_dict: read-only research build. */
+
 
 /**
  * @brief           Set nonce-seeds OS dict variant
@@ -927,49 +869,8 @@ int x8A4_set_boot_nonce_os_dict(uint8_t *generator, uint32_t generator_size) {
  * @param[in]       domain_index
  * @return
  */
-int x8A4_set_nonce_seeds_os_dict(uint8_t *seed, int domain_index) {
-  if (!seed) {
-    x8A4_log_error("Failed to set nonce seed, seed is NULL!\n", "");
-    return -1;
-  }
-  uint64_t nvram_dict = get_service_nvram_dict(get_dtre_options());
-  if (!nvram_dict) {
-    x8A4_log_error("Failed to set nonce seed, nvram dict is NULL!\n", "");
-    return -1;
-  }
-  uint32_t seeds_size = 0;
-  uint8_t *nonce_seeds = NULL;
-  if(strcmp(gXPF.darwinVersion, "23.0.0") >= 0 && nonce_slot_format_cached == 1) {
-    nonce_seeds = get_nvram_entry_bytes(nvram_dict, kKRNC1BTPropertyKey,
-                                        OS_DATA, &seeds_size);
-  } else {
-    nonce_seeds = get_nvram_entry_bytes(nvram_dict, kNonceSeedsPropertyKey,
-                                        OS_DATA, &seeds_size);
-  }
-  if (!nonce_seeds) {
-    x8A4_log_error("Failed to get nonce-seeds!\n", "");
-  }
-  if(strcmp(gXPF.darwinVersion, "23.0.0") >= 0 && nonce_slot_format_cached == 1) {
-    struct x8A4_nonce_seeds_slot *slot = (struct x8A4_nonce_seeds_slot *)nonce_seeds;
+/* Removed mutation API x8A4_set_nonce_seeds_os_dict: read-only research build. */
 
-    memcpy(&slot->seed.seed, seed, 16);
-    int ret = set_nvram_entry_bytes(nvram_dict, kKRNC1BTPropertyKey, nonce_seeds, seeds_size, OS_DATA);
-    if (ret) {
-      x8A4_log_error("Failed to set nonce seed!\n", "");
-      return -1;
-    }
-  } else {
-    struct x8A4_nonce_seeds *seeds = (struct x8A4_nonce_seeds *)nonce_seeds;
-    memcpy(&seeds->seeds[domain_index].seed, seed, 16);
-    int ret = set_nvram_entry_bytes(nvram_dict, kNonceSeedsPropertyKey, nonce_seeds, seeds_size, OS_DATA);
-    if (ret) {
-      x8A4_log_error("Failed to set nonce seed!\n", "");
-      return -1;
-    }
-  }
-  x8A4_sync_nvram();
-  return 0;
-}
 
 /**
  * @brief           Get boot-nonce registry variant
@@ -1001,30 +902,8 @@ uint8_t *x8A4_get_boot_nonce_registry(uint32_t *generator_size) {
  * @param[out]      generator
  * @return          Zero on success
  */
-int x8A4_set_boot_nonce_registry(uint8_t *generator) {
-  int ret = set_nvram_entry(get_dtre_options(), kBootNoncePropertyKey,
-                            (const char *)generator);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set nvram entry(%s)!\n", kBootNoncePropertyKey);
-    return -1;
-  }
-  ret = set_nvram_entry(get_dtre_options(), kIONVRAMSyncNowPropertyKey,
-                        kBootNoncePropertyKey);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set nvram entry(%s)!\n", kIONVRAMSyncNowPropertyKey);
-    return -1;
-  }
-  ret = set_nvram_entry(get_dtre_options(), kIONVRAMForceSyncNowPropertyKey,
-                        kBootNoncePropertyKey);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set nvram entry(%s)!\n", kIONVRAMForceSyncNowPropertyKey);
-    return -1;
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_set_boot_nonce_registry: read-only research build. */
+
 
 /**
  * @brief           Get apnonce generator
@@ -1141,81 +1020,15 @@ uint8_t *x8A4_get_apnonce(uint32_t *apnonce_size) {
  * @param[out]      generator_size
  * @return          Pointer to apnonce generator(uint8_t array)
  */
-uint8_t *x8A4_set_apnonce_generator(uint8_t *generator, uint32_t *generator_size) {
-  if (!generator || (strlen((char *)generator) < 16 || strlen((char *)generator) > 18)) {
-    x8A4_log_error("Failed to set apnonce generator, generator is invalid! (0x%016llX:%s)\n", generator, generator ? (char *)generator : "NULL");
-    return NULL;
-  }
-  if (!generator_size) {
-    x8A4_log_error("Failed to set apnonce generator, out generator size pointer is NULL!\n", "");
-    return NULL;
-  }
-  char generator_str[19];
-  generator_str[0] = '0';
-  generator_str[1] = 'x';
-  if(strlen((char *)generator) == 16 && (generator[0] != '0' && generator[1] != 'x')) {
-    strncpy(generator_str + 2, (char *)generator, 16);
-  } else if(strlen((char *)generator) == 18 && (generator[0] == '0' && generator[1] == 'x')) {
-    strncpy(generator_str, (char *)generator, 18);
-  } else {
-    x8A4_log_error("Failed to set apnonce generator, generator is invalid! (0x%016llX:%s)\n", generator, generator ? (char *)generator : "NULL");
-    return NULL;
-  }
-  uint8_t *generator2 = (uint8_t *)generator_str;
-  if (io_clear_apnonce()) {
-x8A4_log_error("Failed to clear current apnonce generator!\n", "");
-    return NULL;
-  }
-  if (io_generate_apnonce()) {
-x8A4_log_error("Failed to generate new apnonce generator!\n", "");
-    return NULL;
-  }
-  uint32_t tmp_generator_size = *generator_size;
-  int ret = x8A4_set_boot_nonce_registry(generator2);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set apnonce generator in registry, retrying with os-dict!\n", "");
-    ret = x8A4_set_boot_nonce_os_dict(generator2, strlen((const char *)generator2) + 1);
-    if(ret) {
-      x8A4_log_error("Failed to set apnonce generator in os-dict!\n", "");
-      *generator_size = 0;
-      return NULL;
-    }
-  }
-  ret = x8A4_sync_nvram();
-  if(ret) {
-x8A4_log_error("Failed to set sync nvram!\n", "");
-    *generator_size = 0;
-    return NULL;
-  }
-  generator2 = x8A4_get_boot_nonce_registry(generator_size);
-  if (!generator2 || !*generator_size) {
-    generator2 = x8A4_get_boot_nonce_os_dict(generator_size);
-    if (!generator2 || !*generator_size) {
-      x8A4_log_error("Failed to set apnonce generator!\n", "");
-      *generator_size = 0;
-      return NULL;
-    }
-  }
-  *generator_size = tmp_generator_size;
-  return generator;
-}
+/* Removed mutation API x8A4_set_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           Clears the apnonce generator
  * @return          Zero on success
  */
-int x8A4_clear_apnonce_generator(void) {
-  if (io_clear_apnonce()) {
-    x8A4_log_error("Failed to clear current apnonce generator!\n", "");
-    return -1;
-  }
-  if(x8A4_sync_nvram()) {
-    x8A4_log_error("Failed to set sync nvram!\n", "");
-    return -2;
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_clear_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           Get IOAESAccelerator Keys
@@ -1513,34 +1326,14 @@ void x8A4_cli_get_apnonce(void) {
  * @brief           CLI set apnonce generator
  * @param[in]       new_generator
  */
-void x8A4_cli_set_apnonce_generator(const char *new_generator) {
-  uint32_t new_generator_size = strlen(new_generator);
-  uint32_t out_generator_size = new_generator_size;
-  if(new_generator_size >= 16) {
-    x8A4_log("Setting apnonce generator(%s)...\n", new_generator);
-    uint8_t *generator = x8A4_set_apnonce_generator((uint8_t *)new_generator, &out_generator_size);
-    if(generator && new_generator_size == out_generator_size && memcmp(new_generator, generator, new_generator_size) == 0) {
-      x8A4_log("Done!\n", "");
-      x8A4_log("Successfully set apnonce generator(%s)!\n", generator);
-    } else {
-      x8A4_log_error("Failed to set apnonce generator(%s), set(%s)!\n", new_generator, (generator) ? (const char *)generator : "NULL");
-    }
-  }
-}
+/* Removed mutation API x8A4_cli_set_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           CLI clear apnonce generator
  */
-void x8A4_cli_clear_apnonce_generator(void) {
-  x8A4_log("Clearing apnonce generator...\n", "");
-  int ret = x8A4_clear_apnonce_generator();
-  if(!ret) {
-    x8A4_log("Done!\n", "");
-    x8A4_log("Successfully cleared apnonce generator!\n", "");
-  } else {
-    x8A4_log_error("Failed to clear apnonce generator!\n", "");
-  }
-}
+/* Removed mutation API x8A4_cli_clear_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           CLI get IOAESAccelerator keys
@@ -1621,48 +1414,5 @@ void x8A4_cli_get_nonce_seeds(void) {
  * @brief           CLI set cryptex seed
  * @param[in]       new_seed
  */
-void x8A4_cli_set_cryptex_seed(const char *new_seed) {
-  x8A4_log("Setting cryptex seed(%s)...\n", new_seed);
-  if(!new_seed) {
-    return;
-  }
-  if(strlen(new_seed) < 32) {
-    return;
-  }
-  char seed_str[35];
-  char seed_str2[35];
-  seed_str2[0] = '0';
-  seed_str2[1] = 'x';
-  if(strlen(new_seed) == 34 && (new_seed[0] == '0' && new_seed[1] == 'x')) {
-    strncpy(seed_str, new_seed, 18);
-    strncpy(seed_str2 + 2, new_seed + 18, 16);
-  } else if(strlen(new_seed) == 32 && (new_seed[0] != '0' && new_seed[1] != 'x')) {
-    strncpy(seed_str + 2, new_seed, 16);
-    strncpy(seed_str2 + 2, new_seed + 18, 16);
-  } else {
-    return;
-  }
-  uint64_t seed[2];
-  seed[0] = strtoull(seed_str, NULL, 0);
-  seed[1] = strtoull(seed_str2, NULL, 0);
-  if((!seed[0] || seed[0] == ~(uint64_t)0) || !seed[1] || seed[1] == ~(uint64_t)0) {
-    return;
-  }
-  seed[0] = __builtin_bswap64(seed[0]);
-  seed[1] = __builtin_bswap64(seed[1]);
-  int cryptex_boot_index = 0;
-  if(strcmp(gXPF.darwinVersion, "23.0.0") >= 0 && nonce_slot_format_cached == 1) {
-    cryptex_boot_index = x8A4_get_cryptex_boot_slot_slots_index();
-  } else {
-    cryptex_boot_index = x8A4_get_cryptex_boot_domain_index();
-  }
-  if(cryptex_boot_index == -1) {
-    return;
-  }
-  if(x8A4_set_nonce_seeds_os_dict((uint8_t *)seed, cryptex_boot_index)) {
-    x8A4_log_error("Failed to set cryptex seed(%s)!\n", new_seed);
-    return;
-  }
-  x8A4_log("Done!\n", "");
-  x8A4_log("Successfully set cryptex seed(%s)!\n", new_seed);
-}
+/* Removed mutation API x8A4_cli_set_cryptex_seed: read-only research build. */
+
