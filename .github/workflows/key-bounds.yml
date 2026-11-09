@@ -18,6 +18,12 @@ jobs:
             -fsanitize=address,undefined -fno-omit-frame-pointer \
             -IInclude tests/key_bounds_test.c -o /tmp/x8a4-key-bounds-test
           /tmp/x8a4-key-bounds-test
+      - name: Exercise production key-record reader with mock kernel and sanitizers
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/key_table_reader_test.c -o /tmp/x8a4-key-reader-test
+          /tmp/x8a4-key-reader-test
       - name: Regression checks for unsafe pointer math and CLI write commands
         run: python3 tests/source_regression.py
 

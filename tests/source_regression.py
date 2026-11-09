@@ -64,4 +64,7 @@ assert "return x8A4_cli_get_accel_keys(requested) == 0 ? 0 : 1;" in cli
 assert 'strcmp(model, "iPad13,4")' in cli
 assert 'strcmp(osrelease, "23.3.0")' in cli
 assert "inspected < 262144" in kernel
+assert "x8A4_read_accel_records(kernel_keys, out_keys, count" in src
+assert "x8A4_key_table_kread" in src
+assert "for (uint32_t i = 0; i < count; ++i)" not in src[src.index("struct x8A4_accel_key *x8A4_get_ioaesaccelkeys"):src.index("/* The legacy cleanup table holds 128 pointers.")]
 print("PASS: source regression checks (not live-device validation)")

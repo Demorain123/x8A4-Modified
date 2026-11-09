@@ -20,6 +20,11 @@
 #include <x8A4/Kernel/kpf.h>
 #include <libkrw.h>
 #include <x8A4/key_bounds.h>
+#include <x8A4/key_table_reader.h>
+
+static int x8A4_key_table_kread(uint64_t addr, void *out, size_t size) {
+  return kread(addr, out, size);
+}
 
 _Static_assert(sizeof(struct x8A4_accel_key) == 52,
                "IOAESAccelerator key record layout changed");
@@ -1058,18 +1063,11 @@ struct x8A4_accel_key *x8A4_get_ioaesaccelkeys(uint32_t *keys_count) {
   struct x8A4_accel_key *out_keys = calloc(count, sizeof(*out_keys));
   if (!out_keys) return NULL;
 
-  /* Kernel keys are byte addresses; local keys are typed structs. Never
-     multiply a typed pointer by sizeof(struct) a second time. */
-  for (uint32_t i = 0; i < count; ++i) {
-    size_t offset = 0;
-    if (!x8A4_accel_offset(count, i, sizeof(*out_keys), &offset) ||
-        kernel_keys > UINT64_MAX - (uint64_t)offset ||
-        kread(kernel_keys + (uint64_t)offset, &out_keys[i],
-              sizeof(*out_keys))) {
-      x8A4_log_error("IOAESAccelerator key read failed; discarding table.\n", "");
-      free(out_keys);
-      return NULL;
-    }
+  if (x8A4_read_accel_records(kernel_keys, out_keys, count,
+                              sizeof(*out_keys), x8A4_key_table_kread) != 0) {
+    x8A4_log_error("Key table read failed; discarding buffer.\n", "");
+    free(out_keys);
+    return NULL;
   }
 
   /* The legacy cleanup table holds 128 pointers. Fail closed on overflow. */

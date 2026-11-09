@@ -48,3 +48,5 @@ This repository was forked from `Cryptiiiic/x8A4` at upstream commit `99a79f70bc
 - macOS CI examines the whole dynamic library's write-capable imports; this is a dependency-symbol check, not proof that the jailbreak kernel-read provider cannot modify state.
 
 **Still not ready for on-device installation:** XPF structure and IOAESAccelerator offsets must be verified for the exact M1 17.3.1 kernel, library allocation tracking audited, and emitted keys independently cross-checked. Never replace system-installed packages with this experiment.
+
+- Stage 3: the production key-copy loop now shares a pure C read routine with sanitizer-tested injected-kernel fixtures (normal 52-byte stride, record-count rejects, address overflow, read failures and guard canaries).
