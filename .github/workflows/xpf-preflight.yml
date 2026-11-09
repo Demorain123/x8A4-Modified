@@ -1,0 +1,77 @@
+name: XPF-only offline preflight
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/xpf-preflight.yml"
+      - "tools/xpf_preflight.c"
+      - "tests/xpf_preflight_mock.c"
+      - "tests/test_xpf_preflight.py"
+      - "Lib/libxpf.a"
+      - "Lib/libchoma.a"
+      - "Include/XPF/xpf.h"
+
+permissions:
+  contents: read
+
+jobs:
+  host-mock-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the standalone entry using XPF API mocks
+        run: python3 tests/test_xpf_preflight.py
+
+  ios-arm64-build-audit:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the ad-hoc signing utility
+        run: brew install ldid-procursus
+      - name: Build only the XPF preflight executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          XPF_ARCHIVE_SHA256="$(shasum -a 256 Lib/libxpf.a | awk '{print $1}')"
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang \
+            -std=c11 -Wall -Wextra -Werror -pedantic \
+            -arch arm64 -isysroot "$SDK" -miphoneos-version-min=14.0 \
+            -DXPF_PREFLIGHT_SOURCE_COMMIT=\"${GITHUB_SHA}\" \
+            -DXPF_ARCHIVE_SHA256=\"${XPF_ARCHIVE_SHA256}\" \
+            -DXPF_EXPECTED_INPUT_SHA256=\"16e2f6ab693b6d26a038c799e8b17132a5437d4fddd892b90c3d2a6ae8a1843c\" \
+            tools/xpf_preflight.c Lib/libxpf.a Lib/libchoma.a \
+            -framework Compression -framework CoreFoundation \
+            -o dist/xpf_preflight
+          ldid -S -Hsha256 -Cadhoc dist/xpf_preflight
+          lipo dist/xpf_preflight -verify_arch arm64
+          file dist/xpf_preflight
+          if nm -u dist/xpf_preflight | grep -Ei '_(krw_|kread|kwrite|kcall|mach_vm_read|mach_vm_write|vm_read|vm_write|task_for_pid|IOConnectCall|IORegistryEntrySet|x8A4_)'; then
+            echo "STOP: forbidden live-access/provider symbol imported"
+            exit 1
+          fi
+          if otool -L dist/xpf_preflight | grep -Ei 'libkrw|libx8A4'; then
+            echo "STOP: libkrw or x8A4 library dependency detected"
+            exit 1
+          fi
+          if nm -g dist/xpf_preflight | grep -Ei '_x8A4_|_krw_|_kwrite|_kread'; then
+            echo "STOP: forbidden x8A4 or kernel-access symbol present"
+            exit 1
+          fi
+          shasum -a 256 dist/xpf_preflight > dist/xpf_preflight.sha256
+          {
+            echo "tool_version=0.1.0"
+            echo "source_commit=${GITHUB_SHA}"
+            echo "libxpf_sha256=${XPF_ARCHIVE_SHA256}"
+            echo "expected_kernelcache_sha256=16e2f6ab693b6d26a038c799e8b17132a5437d4fddd892b90c3d2a6ae8a1843c"
+            echo "kernelcache_included=false"
+            echo "device_execution=false"
+          } > dist/BUILD-MANIFEST.txt
+      - name: Upload only the XPF preflight binary and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: xpf-preflight-ios-arm64-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
