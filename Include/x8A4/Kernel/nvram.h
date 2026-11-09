@@ -43,7 +43,6 @@ struct nvram_key {
 /* Prototypes */
 uint64_t get_service_nvram_dict(io_service_t service);
 uint8_t *get_nvram_entry_bytes(uint64_t nvram_dict, const char *key, enum os_type type, uint32_t *out_size);
-int set_nvram_entry_bytes(uint64_t nvram_dict, const char *key, uint8_t *entry_bytes, uint32_t size, enum os_type type);
 
 /* Cached Variables */
 extern struct nvram_key *nvram_keys_cached;
