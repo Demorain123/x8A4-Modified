@@ -19,8 +19,6 @@ for pattern in bad:
 
 for expected in (
     "x8A4_accel_count_valid(count)",
-    "x8A4_accel_offset(count, i, sizeof(*out_keys), &offset)",
-    "&out_keys[i]",
     "keys[i].key_id == 0x8A3",
     "keys[i].key_id == 0x8A4",
 ):
@@ -66,5 +64,10 @@ assert 'strcmp(osrelease, "23.3.0")' in cli
 assert "inspected < 262144" in kernel
 assert "x8A4_read_accel_records(kernel_keys, out_keys, count" in src
 assert "x8A4_key_table_kread" in src
+shared_reader = (root / "Include/x8A4/key_table_reader.h").read_text()
+assert "x8A4_accel_offset(count, i, record_size, &byte_offset)" in shared_reader
+assert "(uint8_t *)records + byte_offset" in shared_reader
+assert "reader(kernel_base + (uint64_t)byte_offset" in shared_reader
+assert "record_size != 52" in shared_reader
 assert "for (uint32_t i = 0; i < count; ++i)" not in src[src.index("struct x8A4_accel_key *x8A4_get_ioaesaccelkeys"):src.index("/* The legacy cleanup table holds 128 pointers.")]
 print("PASS: source regression checks (not live-device validation)")
