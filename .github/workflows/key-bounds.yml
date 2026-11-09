@@ -18,6 +18,12 @@ jobs:
             -fsanitize=address,undefined -fno-omit-frame-pointer \
             -IInclude tests/key_bounds_test.c -o /tmp/x8a4-key-bounds-test
           /tmp/x8a4-key-bounds-test
+      - name: Mock targeted reads under ASan and UBSan
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/target_key_test.c -o /tmp/x8a4-target-key-test
+          /tmp/x8a4-target-key-test
       - name: Exercise production key-record reader with mock kernel and sanitizers
         run: |
           cc -std=c17 -Wall -Wextra -Werror -pedantic \
