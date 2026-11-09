@@ -131,7 +131,11 @@ int offsets_init(void) {
   }
   if (ios_1700) {
     koffsets_cached->ipc_port_kobject = 0x48;
-    koffsets_cached->ipc_port_kobject_is_iomachport = 0x1;
+    /* Dopamine 3.0.13 assigns IOMachPort.object=0x30 in its iOS 17+
+     * layout branch, outside the hasSPTM-only structure adjustments.
+     * Cross-source evidence only: the 21D61 kernel path remains a device gate. */
+    koffsets_cached->ipc_port_kobject_is_iomachport = 1;
+    koffsets_cached->iomachport_object = 0x30;
   }
   if (ios_1800) {
 
@@ -144,7 +148,7 @@ int offsets_init(void) {
   if (!koffsets_cached->t1sz_boot) {
     koffsets_cached->t1sz_boot = xpf_item_resolve("kernelConstant.T1SZ_BOOT");
     if (!valid_resolved_offset(koffsets_cached->t1sz_boot) ||
-        koffsets_cached->t1sz_boot > 63) {
+        koffsets_cached->t1sz_boot > 62) {
       x8A4_log_error("Failed to find kernel T1SZ_BOOT!\n", "");
       return -1;
     }

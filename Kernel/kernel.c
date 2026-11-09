@@ -218,12 +218,16 @@ const char *get_kernel_path_legacy(void) {
  * @return          Zero on success
  */
 int kread_smr(uint64_t addr, uint64_t *value, size_t sz) {
+  if (!value || sz != sizeof(*value) || !koffsets_cached ||
+      !koffsets_cached->t1sz_boot || koffsets_cached->t1sz_boot > 62 ||
+      !koffsets_cached->smr || koffsets_cached->smr > 3)
+    return -1;
   int ret = kread(addr, value, sz);
-  if (ret || !value) {
+  if (ret) {
     x8A4_log_error("Failed to read kernel smr pointer 0x%llX 0x%zX(%d)\n", addr, sz, ret);
     return -1;
   }
-  unsign_ptr(value);
+  if (!unsign_ptr(value)) return -1;
   uint64_t bits = (koffsets_cached->smr << (62 - koffsets_cached->t1sz_boot));
   uint64_t case1 = 0xFFFFFFFFFFFFC000 & ~bits;
   uint64_t case2 = 0xFFFFFFFFFFFFFFE0 & ~bits;
@@ -246,7 +250,8 @@ uint64_t unsign_ptr(uint64_t *addr) {
   if (!addr) {
     return 0;
   }
-  if (!*addr) {
+  if (!*addr || !koffsets_cached || !koffsets_cached->t1sz_boot ||
+      koffsets_cached->t1sz_boot > 62) {
     return 0;
   }
   *addr |= ~((1ULL << (64U - koffsets_cached->t1sz_boot)) - 1U);
@@ -268,8 +273,9 @@ uint64_t get_our_proc(void) {
   /* Reject cyclic/broken lists instead of looping indefinitely. */
   for (uint32_t inspected = 0; inspected < 262144 && proc; ++inspected) {
     uint64_t next = 0;
-    if (kread(proc + koffsets_cached->proc_list_next, &next, sizeof(next)) ||
-        !next || next == proc) break;
+    if (kread(proc + koffsets_cached->proc_list_next, &next, sizeof(next)))
+      break;
+    if (!unsign_ptr(&next) || next == proc) break;
     proc = next;
     if (kread(proc + koffsets_cached->proc_pid, &pid, sizeof(pid))) break;
     if (pid == our_pid) {
@@ -331,7 +337,10 @@ uint64_t get_ipc_port(mach_port_name_t port_name) {
     x8A4_log_error("Failed to read kernel task itk_space! (%d:0x%016llX)\n", ret, itk_space);
     return 0;
   }
-  unsign_ptr(&itk_space);
+  if (!unsign_ptr(&itk_space)) {
+    x8A4_log_error("Kernel task itk_space pointer is invalid after normalization.\n", "");
+    return 0;
+  }
   uint64_t table = 0;
   if (koffsets_cached->table_smr) {
     ret =
@@ -343,14 +352,17 @@ uint64_t get_ipc_port(mach_port_name_t port_name) {
     x8A4_log_error("Failed to read kernel task itk_space table! (%d:0x%016llX)\n", ret, table);
     return 0;
   }
+  if (!unsign_ptr(&table)) {
+    x8A4_log_error("Kernel IPC table pointer is invalid after normalization.\n", "");
+    return 0;
+  }
   uint64_t port = 0;
-  unsign_ptr(&table);
   ret = kread(
       table + (MACH_PORT_INDEX(port_name) * koffsets_cached->ipc_entry_size) +
           koffsets_cached->ipc_entry_object,
       &port, 8);
-  if (ret || !port) {
-    x8A4_log_error("Failed to read port from kernel ipc_entry object! (%d:0x%016llX)\\n", ret, port);
+  if (ret || !unsign_ptr(&port)) {
+    x8A4_log_error("Failed to read or normalize port from kernel ipc_entry object! (%d)\\n", ret);
     return 0;
   }
   return port;
@@ -366,14 +378,14 @@ uint64_t get_ipc_kobject_from_iomachport(uint64_t port_addr) {
     x8A4_log_error("Ipc_kobject is not wrapped by IOMachPort on this version!\n", "");
     return 0;
   }
-  if (port_addr == 0) {
-    x8A4_log_error("IOMachPort port address is zero!\n", "");
+  if (!unsign_ptr(&port_addr)) {
+    x8A4_log_error("IOMachPort port address is invalid after normalization.\n", "");
     return 0;
   }
   uint64_t kobject = 0;
   int ret = kread(port_addr + koffsets_cached->iomachport_object, &kobject, 8);
-  if (ret || !kobject) {
-    x8A4_log_error("Failed to read kobject from IOMachPort address! (%d:0x%016llX)\n", ret, kobject);
+  if (ret || !unsign_ptr(&kobject)) {
+    x8A4_log_error("Failed to read or normalize IOMachPort object! (%d)\n", ret);
     return 0;
   }
   return kobject;
@@ -392,14 +404,13 @@ uint64_t get_ipc_kobject(io_service_t service) {
   }
   uint64_t kobject = 0;
   int ret = kread(port + koffsets_cached->ipc_port_kobject, &kobject, 8);
-  if (ret || !kobject) {
-    x8A4_log_error("Failed to read kobject from ipc port! (%d:0x%016llX)\n", ret, kobject);
+  if (ret || !unsign_ptr(&kobject)) {
+    x8A4_log_error("Failed to read or normalize kobject from ipc port! (%d)\n", ret);
     return 0;
   }
   if (koffsets_cached->ipc_port_kobject_is_iomachport) {
     kobject = get_ipc_kobject_from_iomachport(kobject);
   }
-  unsign_ptr(&kobject);
   return kobject;
 }
 

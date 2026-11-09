@@ -30,7 +30,13 @@ jobs:
             -fsanitize=address,undefined -fno-omit-frame-pointer \
             -IInclude tests/key_table_reader_test.c -o /tmp/x8a4-key-reader-test
           /tmp/x8a4-key-reader-test
-      - name: Regression checks for unsafe pointer math and CLI write commands
+      - name: Test private raw-record archive under ASan and UBSan
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/private_record_archive_test.c -o /tmp/x8a4-private-record-archive-test
+          ASAN_OPTIONS=detect_leaks=0 /tmp/x8a4-private-record-archive-test
+      - name: Regression checks for target-only raw-record CLI and pointer path
         run: python3 tests/source_regression.py
 
   ios-arm64-build:
@@ -80,7 +86,7 @@ jobs:
           fi
           file build/x8A4_CLI build/libx8A4Research.1.dylib
           echo "PASS: experimental ARM64 build; NOT an on-device safety approval"
-      - name: Compile opt-in code path for syntax validation only
+      - name: Build and audit opt-in ARM64 binaries (not packaged or uploaded)
         run: |
           # This build is NOT packaged, installed, run or uploaded anywhere.
           cmake -S . -B build-live-syntax \
@@ -90,7 +96,26 @@ jobs:
             -DRELEASE=ON \
             -DX8A4_ENABLE_LIVE_KEY_READ=ON
           cmake --build build-live-syntax --parallel 2
-          echo "PASS: opt-in code compiles; M1 runtime NOT verified"
+          lipo build-live-syntax/x8A4_CLI -verify_arch arm64
+          lipo build-live-syntax/libx8A4Research.1.dylib -verify_arch arm64
+          if nm -arch arm64 -u build-live-syntax/x8A4_CLI | grep -E '_x8A4_(get_ioaesaccelkeys|get_apnonce|get_cryptex_nonce)'; then
+            echo "STOP: legacy whole-table or nonce API is imported by the target CLI"
+            exit 1
+          fi
+          if nm -arch arm64 -u build-live-syntax/libx8A4Research.1.dylib | grep -Ei '_(kwrite|physwrite|kcall|IORegistryEntrySetCFProperty|IOConnectCallStructMethod)($|[^[:alnum:]_])'; then
+            echo "STOP: kernel/NVRAM mutation import found in opt-in dylib"
+            exit 1
+          fi
+          for binary in build-live-syntax/x8A4_CLI build-live-syntax/libx8A4Research.1.dylib; do
+            if strings -a "$binary" | grep -E 'KEY: 0x|IV: 0x'; then
+              echo "STOP: key bytes could be printed by an opt-in binary"
+              exit 1
+            fi
+          done
+          otool -L build-live-syntax/x8A4_CLI | grep -F 'libx8A4Research.1.dylib'
+          otool -l build-live-syntax/x8A4_CLI | grep -F '@loader_path'
+          shasum -a 256 build-live-syntax/x8A4_CLI build-live-syntax/libx8A4Research.1.dylib
+          echo "PASS: opt-in ARM64 build/import audit; not a live-device approval"
       - name: Prepare OFF-by-default research build for binary audit
         run: |
           mkdir -p safe-build

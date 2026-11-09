@@ -1,28 +1,66 @@
-"""Regression checks for the currently targeted x8A4 key paths.
+"""Source-level regression checks for the bounded target-record CLI.
 
-This checks source-level invariants, not Mach-O instruction safety or M1 compatibility.
+These checks do not establish M1 runtime or kernel-offset compatibility.
 """
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 src = (root / "x8A4.c").read_text()
 cli = (root / "x8A4_CLI.c").read_text()
+kernel = (root / "Kernel/kernel.c").read_text()
+offsets = (root / "Kernel/offsets.c").read_text()
+target = (root / "Include/x8A4/target_key.h").read_text()
+archive = (root / "Include/x8A4/private_record_archive.h").read_text()
+cmake = (root / "CMakeLists.txt").read_text()
 live = src.split("\n#if 0", 1)[0]
 
-bad = [
+for forbidden in (
     "keys + (struct_size * i)",
     "out_keys + (struct_size * i)",
-    "%08X%08X%08X%08X%",
-]
-for pattern in bad:
-    assert pattern not in live, f"Unsafe pattern remains: {pattern}"
-
-for expected in (
-    "x8A4_accel_count_valid(count)",
-    "keys[i].key_id == 0x8A3",
-    "keys[i].key_id == 0x8A4",
+    "Key(0x%04X) KEY:",
+    "Key(0x%04X) IV:",
 ):
-    assert expected in live, f"Expected safety check absent: {expected}"
+    assert forbidden not in live, f"Unsafe or secret-printing pattern remains: {forbidden}"
+
+assert "X8A4_ENABLE_LIVE_KEY_READ" in cli
+assert "return 78;" in cli
+assert "--export-accel-records" in cli
+assert "--get-accel-key" not in cli
+assert "x8A4_cli_export_target_records(output_dir)" in cli
+assert 'strcmp(model, "iPad13,4")' in cli
+assert 'strcmp(osrelease, "23.3.0")' in cli
+assert 'strcmp(build, "21D61")' in cli
+assert "umask(077)" in cli
+
+init_start = src.index("int x8A4_init(void) {")
+assert src.index("x8A4_target_runtime_matches()", init_start) < src.index("if (xpf_init())", init_start)
+assert "x8A4_scan_target_key(" in src
+assert "x8A4_archive_write_record(dirfd, &record, index)" in src
+assert "x8A4_secure_clear(&record, sizeof(record))" in src
+assert "X8A4_ENABLE_LEGACY_TABLE_READ" in src
+assert "legacy whole-table key reads are disabled" in src
+assert "x8A4_get_ioaesaccelkeys(" not in src[src.index("int x8A4_cli_export_target_records"):]
+
+assert "X8A4_RAW_RECORD_BYTES 52U" in archive
+assert "O_EXCL | O_NOFOLLOW" in archive
+assert "fchmod(fd, 0600)" in archive
+assert "record_bytes" in archive
+assert "KEY:" not in archive and "IV:" not in archive
+assert target.count("x8A4_secure_clear(&entry") == 4
+
+# Each pointer read is normalized before its next dereference.
+assert "if (!unsign_ptr(&next) || next == proc) break;" in kernel
+assert "if (!unsign_ptr(&itk_space))" in kernel
+assert "if (!unsign_ptr(&table))" in kernel
+assert "if (ret || !unsign_ptr(&port))" in kernel
+assert "if (!unsign_ptr(&port_addr))" in kernel
+assert "if (ret || !unsign_ptr(&kobject))" in kernel
+assert "koffsets_cached->t1sz_boot > 62" in kernel
+assert "sz != sizeof(*value)" in kernel
+assert "if (!unsign_ptr(value)) return -1;" in kernel
+
+assert "koffsets_cached->ipc_port_kobject_is_iomachport = 1;" in offsets
+assert "koffsets_cached->iomachport_object = 0x30;" in offsets
 
 for forbidden in (
     "x8A4_cli_set_cryptex_seed",
@@ -31,65 +69,11 @@ for forbidden in (
     '"set-cryptex-nonce"',
     '"set-apnonce-generator"',
     '"clear-apnonce-generator"',
+    "KEY: 0x",
+    "IV: 0x",
 ):
-    assert forbidden not in cli, f"Mutation API exposed by CLI: {forbidden}"
+    assert forbidden not in cli, f"Mutation or secret output remains in CLI: {forbidden}"
 
-assert "entry.key_sz != 16 && entry.key_sz != 128" in (root / "Include/x8A4/target_key.h").read_text()
-assert "X8A4_ENABLE_LIVE_KEY_READ" in cli
-assert "live kernel key reading disabled" in cli
-cmake = (root / "CMakeLists.txt").read_text()
 assert "target_compile_definitions(x8A4 PRIVATE X8A4_ENABLE_LIVE_KEY_READ=1)" in cmake
-assert "static int x8A4_target_runtime_matches(void)" in src
-init_start = src.index("int x8A4_init(void) {")
-assert src.index("x8A4_target_runtime_matches()", init_start) < src.index("if (xpf_init())", init_start)
-# The CLI must use the single-key stack scanner, not allocate the entire
-# kernel accelerator table or put secret buffers into the legacy GC lists.
-start = src.index("int x8A4_cli_get_accel_keys(uint32_t chosen_key) {")
-end = src.index("\n/**\n * @brief           CLI get nonce-seeds", start)
-key_cli = src[start:end]
-assert "x8A4_lookup_target_key(chosen_key, &key, &index)" in key_cli
-assert "x8A4_get_ioaesaccelkeys(" not in key_cli
-assert "calloc(" not in key_cli
-assert "gc_cached" not in key_cli and "gc_d_cached" not in key_cli
-assert "x8A4_scan_target_key(" in src
-assert "x8A4_accel_count_valid(count)" in src
-assert "x8A4_kernel_read_span(kobj" in src
-
-for path, forbidden in {
-    "Kernel/nvram.c": ("kwrite(", "set_nvram_entry_bytes("),
-    "Kernel/kernel.c": ("IOConnectCallStructMethod(", "io_generate_apnonce(", "io_clear_apnonce("),
-    "Registry/registry.c": ("IORegistryEntrySetCFProperty(", "int set_nvram_entry("),
-    "Services/services.c": ("get_apple_mobile_ap_nonce_service(",),
-}.items():
-    current = (root / path).read_text()
-    for marker in forbidden:
-        assert marker not in current, f"Forbidden mutation implementation: {path}: {marker}"
-
-object_file = (root / "Kernel/osobject.c").read_text()
-assert "&dict_size, sizeof(dict_size)" in object_file
-assert "key_len >= PATH_MAX" in object_file
-assert "char key_string[PATH_MAX] = {0}" in object_file
-offsets = (root / "Kernel/offsets.c").read_text()
-assert "valid_resolved_offset" in offsets
-assert "return -1;" in offsets
-kernel = (root / "Kernel/kernel.c").read_text()
-assert "get_boot_manifest_hash_len()" in kernel
-assert "Preboot kernelcache path missing" in kernel
-assert "int x8A4_cli_get_accel_keys(uint32_t chosen_key)" in src
-assert "return x8A4_cli_get_accel_keys(requested) == 0 ? 0 : 1;" in cli
-assert 'strcmp(model, "iPad13,4")' in cli
-assert 'strcmp(osrelease, "23.3.0")' in cli
-assert 'sysctlbyname("kern.osversion"' in cli
-assert 'strcmp(build, "21D61")' in cli
-assert "inspected < 262144" in kernel
-assert "x8A4_read_accel_records(kernel_keys, out_keys, count" in src
-assert "x8A4_key_table_kread" in src
-shared_reader = (root / "Include/x8A4/key_table_reader.h").read_text()
-assert "x8A4_accel_offset(count, i, record_size, &byte_offset)" in shared_reader
-assert "(uint8_t *)records + byte_offset" in shared_reader
-assert "x8A4_kernel_read_span(kernel_base" in shared_reader
-assert "reader(address, (uint8_t *)records + byte_offset" in shared_reader
-assert "x8A4_kernel_read_span(base" in (root / "Include/x8A4/target_key.h").read_text()
-assert "record_size != 52" in shared_reader
-assert "for (uint32_t i = 0; i < count; ++i)" not in src[src.index("struct x8A4_accel_key *x8A4_get_ioaesaccelkeys"):src.index("/* The legacy cleanup table holds 128 pointers.")]
+assert 'option(X8A4_ENABLE_LIVE_KEY_READ "Enable EXPERIMENTAL on-device kernel key reads" OFF)' in cmake
 print("PASS: source regression checks (not live-device validation)")

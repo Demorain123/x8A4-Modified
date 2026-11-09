@@ -23,8 +23,10 @@
 #include <x8A4/key_bounds.h>
 #include <x8A4/target_key.h>
 #include <x8A4/key_table_reader.h>
+#include <x8A4/private_record_archive.h>
 
-#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ && \
+    defined(X8A4_ENABLE_LEGACY_TABLE_READ) && X8A4_ENABLE_LEGACY_TABLE_READ
 static int x8A4_key_table_kread(uint64_t addr, void *out, size_t size) {
   return kread(addr, out, size);
 }
@@ -1082,8 +1084,9 @@ uint8_t *x8A4_get_apnonce(uint32_t *apnonce_size) {
 struct x8A4_accel_key *x8A4_get_ioaesaccelkeys(uint32_t *keys_count) {
   if (!keys_count) return NULL;
   *keys_count = 0;
-#if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ)
-  x8A4_log_error("STOP: live kernel key reading disabled in this safety build.\n", "");
+#if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ) || \
+    !defined(X8A4_ENABLE_LEGACY_TABLE_READ) || !(X8A4_ENABLE_LEGACY_TABLE_READ)
+  x8A4_log_error("STOP: legacy whole-table key reads are disabled in this research build.\n", "");
   return NULL;
 #else
   if (!init_done || !koffsets_cached || !x8A4_target_runtime_matches()) {
@@ -1408,10 +1411,8 @@ static int x8A4_target_kread(uint64_t address, void *out, size_t size,
   return kread(address, out, size);
 }
 
-static int x8A4_lookup_target_key(uint32_t chosen_key,
-                                  struct x8A4_target_key_record *result,
-                                  uint32_t *index) {
-  if (!result || !index || !koffsets_cached ||
+static int x8A4_get_target_key_table(uint64_t *kernel_keys, uint32_t *count) {
+  if (!kernel_keys || !count || !koffsets_cached ||
       !koffsets_cached->io_aes_accel_special_keys ||
       !koffsets_cached->io_aes_accel_special_keys_size)
     return -1;
@@ -1419,62 +1420,126 @@ static int x8A4_lookup_target_key(uint32_t chosen_key,
   uint64_t kobj = get_ipc_kobject(get_io_aes_accel_service());
   if (!kobj) return -1;
 
-  uint64_t kernel_keys = 0;
-  uint32_t count = 0;
   uint64_t key_ptr_address = 0, count_address = 0;
   if (!x8A4_kernel_read_span(kobj,
                             koffsets_cached->io_aes_accel_special_keys,
-                            sizeof(kernel_keys), &key_ptr_address) ||
+                            sizeof(*kernel_keys), &key_ptr_address) ||
       !x8A4_kernel_read_span(kobj,
                             koffsets_cached->io_aes_accel_special_keys_size,
-                            sizeof(count), &count_address) ||
-      kread(key_ptr_address, &kernel_keys, sizeof(kernel_keys)) ||
-      !kernel_keys ||
-      kread(count_address, &count, sizeof(count)) ||
-      !x8A4_accel_count_valid(count))
+                            sizeof(*count), &count_address) ||
+      kread(key_ptr_address, kernel_keys, sizeof(*kernel_keys)) ||
+      !unsign_ptr(kernel_keys) ||
+      kread(count_address, count, sizeof(*count)) ||
+      !x8A4_accel_count_valid(*count))
     return -1;
-
-  return x8A4_scan_target_key(kernel_keys, count, chosen_key, result, index,
-                             x8A4_target_kread, NULL);
+  return 0;
 }
-
 #endif
 
-int x8A4_cli_get_accel_keys(uint32_t chosen_key) {
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+static const char *x8A4_scan_failure_text(int status) {
+  switch (status) {
+    case -1: return "incomplete: requested ID not found";
+    case -2: return "incomplete: scanner rejected input";
+    case -3: return "incomplete: record address out of bounds";
+    case -4: return "incomplete: kernel read failed";
+    case -5: return "incomplete: record metadata rejected";
+    default: return "incomplete: unknown scan failure";
+  }
+}
+#endif
+
+int x8A4_cli_export_target_records(const char *output_dir) {
 #if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ)
-  (void)chosen_key;
+  (void)output_dir;
   x8A4_log_error("STOP: live kernel key reading disabled in this safety build.\n", "");
   return 78;
 #else
-  if (!init_done || !koffsets_cached || !x8A4_target_runtime_matches()) {
-    x8A4_log_error("STOP: initialize on the exact approved target before key reads.\n", "");
-    return -1;
-  }
-  if (chosen_key != 0x8A3 && chosen_key != 0x8A4) {
-    x8A4_log_error("Only 0x8A3 or 0x8A4 may be requested.\n", "");
-    return -1;
+  if (!output_dir || !init_done || !koffsets_cached ||
+      !x8A4_target_runtime_matches()) {
+    x8A4_log_error("STOP: exact target initialization and output path required.\n", "");
+    return 1;
   }
 
-  struct x8A4_target_key_record key = {0};
-  uint32_t index = UINT32_MAX;
-  int status = x8A4_lookup_target_key(chosen_key, &key, &index);
-  if (status != 0) {
-    x8A4_log_error("Requested key read failed validation or was not found.\n", "");
-    memset(&key, 0, sizeof(key));
-    return -1;
+  int dirfd = x8A4_archive_create_private_dir(output_dir);
+  if (dirfd < 0) {
+    x8A4_log_error("STOP: could not create a new private output directory.\n", "");
+    return 1;
   }
 
-  x8A4_log("Key(0x%04X) Index: %u\n", key.key_id, index);
-  x8A4_log("Key(0x%04X) Generated: %u\n", key.key_id, key.generated);
-  x8A4_log("Key(0x%04X) Size: %u\n", key.key_id, key.key_sz);
-  x8A4_log("Key(0x%04X) KEY: 0x%08X%08X%08X%08X\n", key.key_id,
-           __builtin_bswap32(key.key[0]), __builtin_bswap32(key.key[1]),
-           __builtin_bswap32(key.key[2]), __builtin_bswap32(key.key[3]));
-  x8A4_log("Key(0x%04X) IV: 0x%08X%08X%08X%08X\n", key.key_id,
-           __builtin_bswap32(key.iv[0]), __builtin_bswap32(key.iv[1]),
-           __builtin_bswap32(key.iv[2]), __builtin_bswap32(key.iv[3]));
-  memset(&key, 0, sizeof(key));
-  return 0;
+  uint64_t kernel_keys = 0;
+  uint32_t count = 0;
+  if (x8A4_get_target_key_table(&kernel_keys, &count) != 0) {
+    (void)x8A4_archive_write_status(dirfd, 0x8A3,
+                                    "incomplete: key table lookup failed");
+    (void)x8A4_archive_write_status(dirfd, 0x8A4,
+                                    "incomplete: key table lookup failed");
+    (void)close(dirfd);
+    x8A4_log_error("STOP: IOAESAccelerator table lookup failed; no records saved.\n", "");
+    return 1;
+  }
+
+  static const uint32_t key_ids[2] = {0x8A3, 0x8A4};
+  unsigned raw_saved = 0, complete = 0;
+  int stop_after_current = 0;
+  for (unsigned n = 0; n < 2; ++n) {
+    const uint32_t key_id = key_ids[n];
+    if (stop_after_current) {
+      if (x8A4_archive_write_status(dirfd, key_id,
+                                    "not attempted: previous read or archive error") != 0)
+        x8A4_log_error("Could not write incomplete status for 0x%03X.\n", key_id);
+      continue;
+    }
+
+    struct x8A4_target_key_record record = {0};
+    uint32_t index = UINT32_MAX;
+    int scan_status = x8A4_scan_target_key(
+        kernel_keys, count, key_id, &record, &index, x8A4_target_kread, NULL);
+    if (scan_status != 0) {
+      const char *reason = x8A4_scan_failure_text(scan_status);
+      if (x8A4_archive_write_status(dirfd, key_id, reason) != 0) {
+        x8A4_log_error("Record 0x%03X scan failed; status could not be saved.\n",
+                       key_id);
+        stop_after_current = 1;
+      } else {
+        x8A4_log_error("Record 0x%03X incomplete (scan status %d).\n",
+                       key_id, scan_status);
+      }
+      x8A4_secure_clear(&record, sizeof(record));
+      if (scan_status != -1) stop_after_current = 1;
+      continue;
+    }
+
+    int archive_status = x8A4_archive_write_record(dirfd, &record, index);
+    x8A4_secure_clear(&record, sizeof(record));
+    if (archive_status == 0) {
+      ++raw_saved;
+      if (x8A4_archive_write_status(dirfd, key_id, "saved") == 0) {
+        ++complete;
+        x8A4_log("Record 0x%03X saved privately (index %u).\n", key_id, index);
+      } else {
+        x8A4_log_error("Record 0x%03X bytes saved, status metadata failed.\n",
+                       key_id);
+        stop_after_current = 1;
+      }
+    } else if (archive_status == 1) {
+      ++raw_saved;
+      (void)x8A4_archive_write_status(
+          dirfd, key_id, "incomplete: raw saved; metadata write failed");
+      x8A4_log_error("Record 0x%03X raw bytes saved; metadata write failed.\n",
+                     key_id);
+      stop_after_current = 1;
+    } else {
+      (void)x8A4_archive_write_status(dirfd, key_id,
+                                      "incomplete: raw archive write failed");
+      x8A4_log_error("Record 0x%03X archive write failed.\n", key_id);
+      stop_after_current = 1;
+    }
+  }
+
+  (void)close(dirfd);
+  if (raw_saved == 2 && complete == 2) return 0;
+  return raw_saved ? 2 : 1;
 #endif
 }
 

@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <x8A4/key_bounds.h>
+#include <x8A4/secure_clear.h>
 
 struct x8A4_target_key_record {
   uint32_t generated, key_id, key_sz;
@@ -27,7 +28,7 @@ static inline int x8A4_scan_target_key(
     uint64_t base, uint32_t count, uint32_t requested_id,
     struct x8A4_target_key_record *out_record, uint32_t *out_index,
     x8A4_target_read_fn read_one, void *context) {
-  if (out_record) memset(out_record, 0, sizeof(*out_record));
+  if (out_record) x8A4_secure_clear(out_record, sizeof(*out_record));
   if (out_index) *out_index = UINT32_MAX;
   if (!out_record || !out_index || !read_one ||
       (requested_id != 0x8A3 && requested_id != 0x8A4) ||
@@ -43,20 +44,20 @@ static inline int x8A4_scan_target_key(
       return -3;
     struct x8A4_target_key_record entry = {0};
     if (read_one(address, &entry, sizeof(entry), context)) {
-      memset(&entry, 0, sizeof(entry));
+      x8A4_secure_clear(&entry, sizeof(entry));
       return -4; /* fail closed: do not skip unreadable entries */
     }
     if (entry.key_id != requested_id) {
-      memset(&entry, 0, sizeof(entry));
+      x8A4_secure_clear(&entry, sizeof(entry));
       continue;
     }
     if (entry.generated != 1 || (entry.key_sz != 16 && entry.key_sz != 128)) {
-      memset(&entry, 0, sizeof(entry));
+      x8A4_secure_clear(&entry, sizeof(entry));
       return -5;
     }
     *out_record = entry;
     *out_index = i;
-    memset(&entry, 0, sizeof(entry));
+    x8A4_secure_clear(&entry, sizeof(entry));
     return 0; /* never scan the rest of the table after a match */
   }
   return -1;
