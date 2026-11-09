@@ -73,6 +73,7 @@ jobs:
           # The command-line executable must bind to OUR unique research library.
           otool -L build/x8A4_CLI
           otool -L build/x8A4_CLI | grep -F 'libx8A4Research.1.dylib'
+          otool -l build/x8A4_CLI | grep -F '@loader_path'
           if otool -L build/x8A4_CLI | grep -F 'libx8A4.1.dylib'; then
             echo "STOP: CLI could load the existing installed libx8A4"
             exit 1
