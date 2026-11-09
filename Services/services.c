@@ -19,8 +19,6 @@
 
 /* Cached Variables */
 io_service_t io_aes_accel_service_cached = IO_OBJECT_NULL;
-io_service_t apple_mobile_ap_nonce_service_cached = IO_OBJECT_NULL;
-io_service_t apple_mobile_ap_nonce_service2_cached = IO_OBJECT_NULL;
 
 /* Functions */
 /**
@@ -45,25 +43,5 @@ io_service_t get_io_aes_accel_service(void) {
  * @brief           Gets the AppleMobileApNonce ioservice
  * @return          AppleMobileApNonce ioservice
  */
-io_connect_t get_apple_mobile_ap_nonce_service(void) {
-  if (apple_mobile_ap_nonce_service2_cached != IO_OBJECT_NULL) {
-    return apple_mobile_ap_nonce_service2_cached;
-  }
-  io_service_t apple_mobile_ap_nonce_service = IOServiceGetMatchingService(
-      kIOMasterPortDefault, IOServiceMatching("AppleMobileApNonce"));
-  if (apple_mobile_ap_nonce_service == IO_OBJECT_NULL) {
-    fprintf(stderr, "[-]: %s: Failed to find ioservice AppleMobileApNonce!\n",
-            __FUNCTION__);
-  } else {
-    apple_mobile_ap_nonce_service_cached = apple_mobile_ap_nonce_service;
-  }
-  io_connect_t apple_mobile_ap_nonce_service2 = IO_OBJECT_NULL;
-  kern_return_t ret = IOServiceOpen(apple_mobile_ap_nonce_service, mach_task_self(), 0, &apple_mobile_ap_nonce_service2);
-  if(ret == KERN_SUCCESS) {
-    apple_mobile_ap_nonce_service2_cached = apple_mobile_ap_nonce_service2;
-  } else {
-    fprintf(stderr, "[-]: %s: Failed to open ioservice AppleMobileApNonce! (0x%X:%s)\n",
-            __FUNCTION__, ret, mach_error_string(ret));
-  }
-  return apple_mobile_ap_nonce_service2;
-}
+/* Removed mutation API get_apple_mobile_ap_nonce_service: read-only research build. */
+
