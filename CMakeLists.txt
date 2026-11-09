@@ -77,6 +77,8 @@ set_target_properties(x8A4
 
 set(SOVERSION 1)
 set_target_properties(x8A4 PROPERTIES SOVERSION ${SOVERSION})
+# Isolate the research build from the already installed libx8A4.1.dylib.
+set_target_properties(x8A4 PROPERTIES OUTPUT_NAME "x8A4Research")
 
 
 target_link_directories(x8A4 PRIVATE
@@ -125,7 +127,7 @@ target_link_libraries(x8A4_CLI
         "x8A4")
 
 add_custom_command(TARGET x8A4 POST_BUILD
-        COMMAND ${LDID} -S -Hsha256 -Cadhoc ${CMAKE_CURRENT_BINARY_DIR}/libx8A4.${SOVERSION}.dylib
+        COMMAND ${LDID} -S -Hsha256 -Cadhoc ${CMAKE_CURRENT_BINARY_DIR}/libx8A4Research.${SOVERSION}.dylib
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Signing libx8A4.${SOVERSION}.dylib..."
 )
