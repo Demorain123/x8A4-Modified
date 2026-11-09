@@ -31,7 +31,9 @@ from PickAstley11's fork.
   and kernel pointer/count field spans, read failures, key metadata validation
   and error exit for missing keys. These do NOT prove M1 address correctness.
 - M1-specific fail-closed runtime guard in the **opt-in** binary:
-  exact `hw.machine=iPad13,4`, `kern.osrelease=23.3.0`, root privileges.
+  exact `hw.machine=iPad13,4`, `kern.osrelease=23.3.0`,
+  `kern.osversion=21D61` and root privileges. This prevents accidental
+  cross-build invocation but is NOT a kernelcache offset proof.
 - Default binary: `X8A4_ENABLE_LIVE_KEY_READ=OFF`, returns exit **78** for a
   key request **without calling `x8A4_init` or libkrw**.
 - The research library output is named `libx8A4Research.1.dylib` to prevent

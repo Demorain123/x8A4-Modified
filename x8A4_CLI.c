@@ -57,17 +57,27 @@ int main(int argc, char **argv) {
    */
   char model[64] = {0};
   char osrelease[64] = {0};
+  char build[64] = {0};
   size_t size = sizeof(model);
   if (geteuid() != 0 ||
       sysctlbyname("hw.machine", model, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(model) || model[size - 1] != '\0' ||
       strcmp(model, "iPad13,4") != 0) {
     fputs("STOP: root and iPad13,4 required for this research build.\n", stderr);
     return 1;
   }
   size = sizeof(osrelease);
   if (sysctlbyname("kern.osrelease", osrelease, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(osrelease) || osrelease[size - 1] != '\0' ||
       strcmp(osrelease, "23.3.0") != 0) {
-    fputs("STOP: expected iPadOS 17.3.1 / Darwin 23.3.0; no reads.\n", stderr);
+    fputs("STOP: expected Darwin 23.3.0; no reads.\n", stderr);
+    return 1;
+  }
+  size = sizeof(build);
+  if (sysctlbyname("kern.osversion", build, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(build) || build[size - 1] != '\0' ||
+      strcmp(build, "21D61") != 0) {
+    fputs("STOP: expected exact iPadOS build 21D61; no reads.\n", stderr);
     return 1;
   }
   if (x8A4_init() != 0) {

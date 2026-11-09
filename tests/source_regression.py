@@ -74,6 +74,8 @@ assert "int x8A4_cli_get_accel_keys(uint32_t chosen_key)" in src
 assert "return x8A4_cli_get_accel_keys(requested) == 0 ? 0 : 1;" in cli
 assert 'strcmp(model, "iPad13,4")' in cli
 assert 'strcmp(osrelease, "23.3.0")' in cli
+assert 'sysctlbyname("kern.osversion"' in cli
+assert 'strcmp(build, "21D61")' in cli
 assert "inspected < 262144" in kernel
 assert "x8A4_read_accel_records(kernel_keys, out_keys, count" in src
 assert "x8A4_key_table_kread" in src
