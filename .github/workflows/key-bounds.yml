@@ -52,17 +52,17 @@ jobs:
       - name: Verify outputs and CLI imports
         run: |
           lipo build/x8A4_CLI -verify_arch arm64
-          lipo build/libx8A4.1.dylib -verify_arch arm64
+          lipo build/libx8A4Research.1.dylib -verify_arch arm64
           if nm -arch arm64 -u build/x8A4_CLI | grep -E '_x8A4_cli_(set|clear)'; then
             echo "STOP: mutating x8A4 CLI import detected"
             exit 1
           fi
           # Scan the whole dylib, not only the restricted CLI.
-          if nm -arch arm64 -u build/libx8A4.1.dylib | grep -Ei '_(kwrite|physwrite|kcall|kmalloc|kdealloc|IORegistryEntrySetCFProperty|IOConnectCallStructMethod)($|[^[:alnum:]_])'; then
+          if nm -arch arm64 -u build/libx8A4Research.1.dylib | grep -Ei '_(kwrite|physwrite|kcall|kmalloc|kdealloc|IORegistryEntrySetCFProperty|IOConnectCallStructMethod)($|[^[:alnum:]_])'; then
             echo "STOP: mutating kernel/NVRAM API imported by library"
             exit 1
           fi
-          if nm -arch arm64 -g build/libx8A4.1.dylib | grep -E '_x8A4_(set_apnonce_generator|clear_apnonce_generator|sync_nvram|set_boot_nonce|set_nonce_seeds|cli_set_cryptex_seed)'; then
+          if nm -arch arm64 -g build/libx8A4Research.1.dylib | grep -E '_x8A4_(set_apnonce_generator|clear_apnonce_generator|sync_nvram|set_boot_nonce|set_nonce_seeds|cli_set_cryptex_seed)'; then
             echo "STOP: mutating x8A4 API remains exported"
             exit 1
           fi
@@ -70,7 +70,14 @@ jobs:
             echo "STOP: AppleMobileApNonce entitlement remains"
             exit 1
           fi
-          file build/x8A4_CLI build/libx8A4.1.dylib
+          # The command-line executable must bind to OUR unique research library.
+          otool -L build/x8A4_CLI
+          otool -L build/x8A4_CLI | grep -F 'libx8A4Research.1.dylib'
+          if otool -L build/x8A4_CLI | grep -F 'libx8A4.1.dylib'; then
+            echo "STOP: CLI could load the existing installed libx8A4"
+            exit 1
+          fi
+          file build/x8A4_CLI build/libx8A4Research.1.dylib
           echo "PASS: experimental ARM64 build; NOT an on-device safety approval"
       - name: Compile opt-in code path for syntax validation only
         run: |
