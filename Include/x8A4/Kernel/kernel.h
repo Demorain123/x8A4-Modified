@@ -19,7 +19,6 @@
 #include <x8A4/Services/services.h>
 
 /* External prototypes */
-extern kern_return_t IOConnectCallStructMethod(io_connect_t service, uint32_t external_selector, const void *args1, size_t arg1_size, void *args2, size_t *args2_size);
 
 /* Prototypes */
 uint64_t krw_get_kbase(void);
@@ -36,8 +35,6 @@ uint64_t get_our_proc(void);
 uint64_t get_our_task(void);
 uint64_t get_ipc_port(mach_port_name_t port_name);
 uint64_t get_ipc_kobject(io_service_t service);
-int io_generate_apnonce(void);
-int io_clear_apnonce(void);
 
 /* Cached Variables */
 extern char *kernel_path_cached;
