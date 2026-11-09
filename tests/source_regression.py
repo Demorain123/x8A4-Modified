@@ -23,7 +23,6 @@ for expected in (
     "&out_keys[i]",
     "keys[i].key_id == 0x8A3",
     "keys[i].key_id == 0x8A4",
-    "entry->key_sz != 128",
 ):
     assert expected in live, f"Expected safety check absent: {expected}"
 
@@ -37,6 +36,7 @@ for forbidden in (
 ):
     assert forbidden not in cli, f"Mutation API exposed by CLI: {forbidden}"
 
+assert "entry->key_sz != 128" in src
 assert "X8A4_ENABLE_LIVE_KEY_READ" in cli
 assert "live kernel key reading disabled" in cli
 print("PASS: source regression checks (not live-device validation)")
