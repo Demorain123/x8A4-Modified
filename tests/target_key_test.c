@@ -60,6 +60,20 @@ int main(void) {
   assert(x8A4_scan_target_key(base, 4, 0x999, &out, &idx, mock_kread, &m) == -2);
   assert(x8A4_scan_target_key(UINT64_MAX - 12, 4, 0x8A3,
                               &out, &idx, mock_kread, &m) != 0);
+  /* Reject crossing 52-byte ranges before invoking the read callback. */
+  m.base = UINT64_MAX - 15;
+  m.reads = 0;
+  assert(x8A4_scan_target_key(m.base, 1, 0x8A3,
+                              &out, &idx, mock_kread, &m) == -3);
+  assert(m.reads == 0 && idx == UINT32_MAX && out.key_id == 0);
+  m.base = UINT64_MAX - 60;
+  m.reads = 0;
+  assert(x8A4_scan_target_key(m.base, 2, 0x8A3,
+                              &out, &idx, mock_kread, &m) == -3);
+  assert(m.reads == 1 && idx == UINT32_MAX && out.key_id == 0);
+  m.base = base;
+  m.reads = 0;
+
   m.records[1].key_id = 0x111;
   assert(x8A4_scan_target_key(base, 4, 0x8A3, &out, &idx, mock_kread, &m) == -1);
   assert(idx == UINT32_MAX && out.key_id == 0);

@@ -48,7 +48,7 @@ assert "calloc(" not in key_cli
 assert "gc_cached" not in key_cli and "gc_d_cached" not in key_cli
 assert "x8A4_scan_target_key(" in src
 assert "x8A4_accel_count_valid(count)" in src
-assert "kobj > UINT64_MAX -" in src
+assert "x8A4_kernel_read_span(kobj" in src
 
 for path, forbidden in {
     "Kernel/nvram.c": ("kwrite(", "set_nvram_entry_bytes("),
@@ -80,7 +80,9 @@ assert "x8A4_key_table_kread" in src
 shared_reader = (root / "Include/x8A4/key_table_reader.h").read_text()
 assert "x8A4_accel_offset(count, i, record_size, &byte_offset)" in shared_reader
 assert "(uint8_t *)records + byte_offset" in shared_reader
-assert "reader(kernel_base + (uint64_t)byte_offset" in shared_reader
+assert "x8A4_kernel_read_span(kernel_base" in shared_reader
+assert "reader(address, (uint8_t *)records + byte_offset" in shared_reader
+assert "x8A4_kernel_read_span(base" in (root / "Include/x8A4/target_key.h").read_text()
 assert "record_size != 52" in shared_reader
 assert "for (uint32_t i = 0; i < count; ++i)" not in src[src.index("struct x8A4_accel_key *x8A4_get_ioaesaccelkeys"):src.index("/* The legacy cleanup table holds 128 pointers.")]
 print("PASS: source regression checks (not live-device validation)")

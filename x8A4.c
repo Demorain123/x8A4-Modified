@@ -1361,18 +1361,20 @@ static int x8A4_lookup_target_key(uint32_t chosen_key,
     return -1;
 
   uint64_t kobj = get_ipc_kobject(get_io_aes_accel_service());
-  if (!kobj ||
-      kobj > UINT64_MAX - koffsets_cached->io_aes_accel_special_keys ||
-      kobj > UINT64_MAX - koffsets_cached->io_aes_accel_special_keys_size)
-    return -1;
+  if (!kobj) return -1;
 
   uint64_t kernel_keys = 0;
   uint32_t count = 0;
-  if (kread(kobj + koffsets_cached->io_aes_accel_special_keys,
-            &kernel_keys, sizeof(kernel_keys)) ||
+  uint64_t key_ptr_address = 0, count_address = 0;
+  if (!x8A4_kernel_read_span(kobj,
+                            koffsets_cached->io_aes_accel_special_keys,
+                            sizeof(kernel_keys), &key_ptr_address) ||
+      !x8A4_kernel_read_span(kobj,
+                            koffsets_cached->io_aes_accel_special_keys_size,
+                            sizeof(count), &count_address) ||
+      kread(key_ptr_address, &kernel_keys, sizeof(kernel_keys)) ||
       !kernel_keys ||
-      kread(kobj + koffsets_cached->io_aes_accel_special_keys_size,
-            &count, sizeof(count)) ||
+      kread(count_address, &count, sizeof(count)) ||
       !x8A4_accel_count_valid(count))
     return -1;
 

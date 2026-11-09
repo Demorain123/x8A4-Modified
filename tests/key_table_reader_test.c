@@ -9,6 +9,12 @@ enum { TEST_COUNT = 3, TEST_RECORD_SIZE = 52 };
 
 static uint8_t kernel_bytes[TEST_COUNT * TEST_RECORD_SIZE];
 static int call_count = 0, fail_at_call = -1;
+static int span_calls = 0;
+static int permissive_reader(uint64_t addr, void *out, size_t size) {
+  (void)addr; (void)out; (void)size;
+  ++span_calls;
+  return 0;
+}
 
 static int mock_kread(uint64_t addr, void *out, size_t size) {
   int call = call_count++;
@@ -48,6 +54,18 @@ int main(void) {
   assert(x8A4_read_accel_records(UINT64_MAX - 20, result.records, 3,
                                  52, mock_kread) != 0);
 
+  call_count = 0;
+  assert(x8A4_read_accel_records(UINT64_MAX - 15, result.records,
+                                 1, 52, mock_kread) != 0);
+  assert(call_count == 0);
+  span_calls = 0;
+  assert(x8A4_read_accel_records(UINT64_MAX - 60, result.records,
+                                 2, 52, permissive_reader) != 0);
+  assert(span_calls == 1);
+  span_calls = 0;
+  assert(x8A4_read_accel_records(UINT64_MAX - 52, result.records,
+                                 1, 52, permissive_reader) == 0);
+  assert(span_calls == 1);
   call_count = 0; fail_at_call = 1;
   assert(x8A4_read_accel_records(TEST_BASE, result.records, 3,
                                  52, mock_kread) != 0);

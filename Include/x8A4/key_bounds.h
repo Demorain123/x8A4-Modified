@@ -22,4 +22,22 @@ static inline int x8A4_accel_offset(uint32_t count, uint32_t index,
   return 1;
 }
 
+/* Check the WHOLE [address, address + length) kernel read interval.
+ * Checking only the record's starting address would miss u64 wraparound.
+ * The exclusive upper bound is intentionally conservative.
+ */
+static inline int x8A4_kernel_read_span(uint64_t base, uint64_t offset,
+                                       uint64_t read_length,
+                                       uint64_t *out_address) {
+  if (out_address) *out_address = 0;
+  if (!out_address || !base || !read_length ||
+      offset > UINT64_MAX - base)
+    return 0;
+  uint64_t address = base + offset;
+  if (read_length > UINT64_MAX - address)
+    return 0;
+  *out_address = address;
+  return 1;
+}
+
 #endif

@@ -21,6 +21,19 @@ int main(void) {
   assert(!x8A4_accel_offset(3, 1, 52, NULL));
   assert(x8A4_accel_offset(3, 2, 52, &offset) && offset == 104);
 
+  uint64_t address = 123;
+  assert(x8A4_kernel_read_span(0x1000, 52, 52, &address));
+  assert(address == 0x1034);
+  assert(!x8A4_kernel_read_span(UINT64_MAX - 15, 0, 52, &address));
+  assert(address == 0);
+  assert(!x8A4_kernel_read_span(UINT64_MAX - 60, 52, 52, &address));
+  assert(address == 0);
+  assert(x8A4_kernel_read_span(UINT64_MAX - 52, 0, 52, &address));
+  assert(address == UINT64_MAX - 52);
+  assert(!x8A4_kernel_read_span(0, 0, 52, &address));
+  assert(!x8A4_kernel_read_span(0x1000, 0, 0, &address));
+  assert(!x8A4_kernel_read_span(0x1000, 0, 52, NULL));
+
   struct fake_key entries[3] = {{.id=0x111}, {.id=0x8A3}, {.id=0x8A4}};
   const unsigned char *bytes = (const unsigned char *)entries;
   for (uint32_t i=0; i<3; ++i) {

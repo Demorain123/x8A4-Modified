@@ -19,10 +19,11 @@ static inline int x8A4_read_accel_records(
 
   for (uint32_t i = 0; i < count; ++i) {
     size_t byte_offset = 0;
+    uint64_t address = 0;
     if (!x8A4_accel_offset(count, i, record_size, &byte_offset) ||
-        kernel_base > UINT64_MAX - (uint64_t)byte_offset ||
-        reader(kernel_base + (uint64_t)byte_offset,
-               (uint8_t *)records + byte_offset, record_size) != 0)
+        !x8A4_kernel_read_span(kernel_base, (uint64_t)byte_offset,
+                              (uint64_t)record_size, &address) ||
+        reader(address, (uint8_t *)records + byte_offset, record_size) != 0)
       return -1;
   }
   return 0;

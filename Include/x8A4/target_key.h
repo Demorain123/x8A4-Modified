@@ -36,11 +36,13 @@ static inline int x8A4_scan_target_key(
 
   for (uint32_t i = 0; i < count; ++i) {
     size_t offset = 0;
+    uint64_t address = 0;
     if (!x8A4_accel_offset(count, i, sizeof(*out_record), &offset) ||
-        base > UINT64_MAX - (uint64_t)offset)
+        !x8A4_kernel_read_span(base, (uint64_t)offset,
+                              sizeof(*out_record), &address))
       return -3;
     struct x8A4_target_key_record entry = {0};
-    if (read_one(base + (uint64_t)offset, &entry, sizeof(entry), context)) {
+    if (read_one(address, &entry, sizeof(entry), context)) {
       memset(&entry, 0, sizeof(entry));
       return -4; /* fail closed: do not skip unreadable entries */
     }
