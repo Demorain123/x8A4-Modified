@@ -1,52 +1,67 @@
-# Safety status: x8A4-Modified, first-stage key-bound repairs
+# x8A4-Modified — M1 / iPadOS 17.3.1 research gate
 
-**Status: EXPERIMENTAL / NOT APPROVED FOR DEVICE INSTALLATION OR LIVE KEY READS**
+**Status: experimental. NOT approved for installation, M1 live key reads, or merging.**
+Do **not** publish real device AES keys, IVs, ECID, nonce seeds, or SHSH tickets in public GitHub logs.
 
-Target research device: M1 iPad Pro (iPad13,4), iPadOS 17.3.1, Dopamine rootless. **Do not publish device ECID, tickets, AES keys, seed arrays, or other device secrets in GitHub issues, CI logs, or PRs.**
+## Exact objective
 
-## Provenance
+Safely retrieve **only** the M1 iPad Pro (iPad13,4) accelerator key records
+`0x8A3` (APNonce) and `0x8A4` (Cryptex), including key bytes, IV,
+key ID/metadata, and independently verify against already archived iPadOS
+17.3.1 signatures. Do not modify the jailbreak setup or overwrite existing
+on-device `x8A4` / `libx8A4.1.dylib`. No NVRAM or kernel writes.
 
-This repository was forked from `Cryptiiiic/x8A4` at upstream commit `99a79f70bc7c90b7bbfcd87b469481581ca43162` (v1.0.2). It is **not** automatically based on `PickAstley11/x8A4`. Selected prior research from that fork may be reviewed separately, but has not been silently merged.
+This repo was forked from upstream Cryptiiiic/x8A4 at
+`99a79f70bc7c90b7bbfcd87b469481581ca43162` (v1.0.2), not automatically
+from PickAstley11's fork.
 
-## Safeguards implemented in this draft
+## Implemented and built offline
 
-- Restrict `x8A4_CLI` to `--help` and `--get-accel-key 0x8A3|0x8A4`; remove commands to modify NVRAM.
-- Default build **refuses** live kernel key reads (exit code 78).
-- Correct erroneous typed-pointer multiplication (52-byte record falsely advanced by 52 * 52).
-- Require 1..128 records, checked kernel byte offsets, successful allocation and complete reads; abort if read fails.
-- Fail on missing keys or invalid key metadata in APNonce/Cryptex code; repair broken KEY/IV format strings.
-- Portable C fixture under ASan/UBSan and static-source checks in CI.
-- Attempt an iOS ARM64 macOS CI build for actual Mach-O artifacts.
+- Fixed the 52-byte typed-pointer stride error in existing table reads and
+  APNonce/Cryptex lookups, plus malformed KEY / IV format strings.
+- Removed upstream kernel/NVRAM mutation APIs from sources and headers.
+  Restricted CLI accepts only `--help` and one `--get-accel-key`
+  (`0x8A3` or `0x8A4`); no setters/clearers are available.
+- **CLI now uses a separate bounded scanner** that calls the kernel-reader
+  for one 52-byte record per iteration and stops as soon as the chosen key is
+  found; it does not allocate or dump the full key table. The separate older
+  library function that returns the entire key table is still present for
+  other library API users, but it is not called from the restricted CLI.
+- Hard key count cap (1 to 128), integer/address overflow checks, failed
+  kernel-read rejection, key ID/generated/size validation, and error exit
+  rather than success for missing keys.
+- M1-specific fail-closed runtime guard in the **opt-in** binary:
+  exact `hw.machine=iPad13,4`, `kern.osrelease=23.3.0`, root privileges.
+- Default binary: `X8A4_ENABLE_LIVE_KEY_READ=OFF`, returns exit **78** for a
+  key request **without calling `x8A4_init` or libkrw**.
+- The research library output is named `libx8A4Research.1.dylib` to prevent
+  a same-name conflict with the currently installed `libx8A4.1.dylib`.
+  The command-line binary is `x8A4_CLI`, not the installed `x8A4`.
+  No installable Debian package is published.
+- CI builds C fixtures with ASan/UBSan, checks dangerous API remnants,
+  compiles actual iOS ARM64 Mach-O binaries, checks CLI linkage, and compiles
+  an opt-in build for syntax coverage. Only the **disabled** binaries are
+  archived for offline binary inspection.
 
-## Explicit limitations
+## Remaining acceptance gates BEFORE any live test
 
-- These tests do **not** validate the current M1 iPad kernel's structure layout, `IOAESAccelerator` offsets, XPF discovery, Dopamine `libkrw` behavior, memory ownership outside the key-table path, or the correctness of actual extracted key bytes.
-- The **underlying library still contains upstream mutation APIs**, even though this restricted CLI does not invoke them. Do not install this experimental library over the already installed one.
-- This is not a guarantee of a stable, read-only kernel stack. GitHub Actions build success is not real-device compatibility.
-- `0x8A3` and `0x8A4` are supporting archival research material. Collecting them does not guarantee any unsigned iPadOS downgrade.
-- No on-device actions, NVRAM edits, NOR rereads, or updates to existing iPadOS archives are part of this PR.
+1. Latest GitHub CI must be green **including isolated dylib linkage**.
+2. Inspect actual built Mach-O instructions, NVRAM/kernel-write imports,
+   entitlements, and the source-to-binary key scanning path.
+3. Establish the actual **target kernel's** XPF, IPC, IOSurface/libkrw and
+   IOAESAccelerator offsets. Source checks and mock-kread are **not** proof
+   that the M1 hardware values are correct.
+4. Test only with a clearly separated binary/library pair, never replace
+   the installed version. First verify help/guard behavior; only then decide
+   whether a controlled, single-key read is justified.
+5. Check 0x8A3/0x8A4 outputs against an independent AES/SHA-384
+   implementation and the already archived original APTicket/Cryptex
+   nonce. Store values in a **private encrypted backup**, never CI output
+   or a public repository.
 
-## Required next gate before any live testing
+**Stop condition:** if any offset, key table count, read result, device
+identity, signing/layout assumption or validation step is unexplained,
+stop without attempting more kernel reads.
 
-1. CI green (portable sanitizers **and** iOS ARM64 build).
-2. Full review of upstream/library mutation symbols, unsafe cleanup patterns, and other paths potentially reachable through initialization.
-3. Static audit of built Mach-O code and correct data structure offsets.
-4. Controlled verification for M1 iPadOS 17.3.1 without replacing system packages, with clear abort/rollback criteria.
-5. If actual 0x8A3/0x8A4 values are safely obtained, validate locally with a separately maintained AES/SHA-384 implementation and preserve in encrypted offline archives. Never post secret values publicly.
-
-**This draft intentionally remains unmerged.**
-
-## Stage 2 — source and build hardening (pending full M1 runtime audit)
-
-- Removed NVRAM write, boot-nonce set/clear, and AppleMobileApNonce mutation entry points from the library and declarations, not just the CLI.
-- Repaired an 8-byte kernel read into a 4-byte OS dictionary size; bounded dictionary entry scans and key-name lengths.
-- Bounded NVRAM buffer allocations and added allocation checks.
-- Failed closed on absent XPF offsets, missing kernelcache path, or unsupported boot-manifest-hash length.
-- Added a bounded kernel process-list walk to prevent infinite loops on bad pointers.
-- Restricted the opt-in live CLI to root, iPad13,4 and Darwin 23.3.0; it is not enabled in standard builds.
-- Key-reader CLI now returns failure when the requested key is missing or invalid, rather than treating missing output as success.
-- macOS CI examines the whole dynamic library's write-capable imports; this is a dependency-symbol check, not proof that the jailbreak kernel-read provider cannot modify state.
-
-**Still not ready for on-device installation:** XPF structure and IOAESAccelerator offsets must be verified for the exact M1 17.3.1 kernel, library allocation tracking audited, and emitted keys independently cross-checked. Never replace system-installed packages with this experiment.
-
-- Stage 3: the production key-copy loop now shares a pure C read routine with sanitizer-tested injected-kernel fixtures (normal 52-byte stride, record-count rejects, address overflow, read failures and guard canaries).
+Even verified key material does not guarantee an unsigned 17.3.1 downgrade;
+the existing OTA APTicket still has SEP, Cryptex and restore constraints.
