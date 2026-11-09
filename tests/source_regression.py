@@ -37,6 +37,19 @@ for forbidden in (
 assert "(entry->key_sz != 16 && entry->key_sz != 128)" in src
 assert "X8A4_ENABLE_LIVE_KEY_READ" in cli
 assert "live kernel key reading disabled" in cli
+# The CLI must use the single-key stack scanner, not allocate the entire
+# kernel accelerator table or put secret buffers into the legacy GC lists.
+start = src.index("int x8A4_cli_get_accel_keys(uint32_t chosen_key) {")
+end = src.index("\n/**\n * @brief           CLI get nonce-seeds", start)
+key_cli = src[start:end]
+assert "x8A4_lookup_target_key(chosen_key, &key, &index)" in key_cli
+assert "x8A4_get_ioaesaccelkeys(" not in key_cli
+assert "calloc(" not in key_cli
+assert "gc_cached" not in key_cli and "gc_d_cached" not in key_cli
+assert "x8A4_scan_target_key(" in src
+assert "x8A4_accel_count_valid(count)" in src
+assert "kobj > UINT64_MAX -" in src
+
 for path, forbidden in {
     "Kernel/nvram.c": ("kwrite(", "set_nvram_entry_bytes("),
     "Kernel/kernel.c": ("IOConnectCallStructMethod(", "io_generate_apnonce(", "io_clear_apnonce("),
