@@ -32,11 +32,8 @@ extern kern_return_t IOServiceClose(io_connect_t service);
 
 /* Prototypes */
 io_service_t get_io_aes_accel_service(void);
-io_connect_t get_apple_mobile_ap_nonce_service(void);
 
 /* Cached Variables */
 extern io_service_t io_aes_accel_service_cached;
-extern io_connect_t apple_mobile_ap_nonce_service_cached;
-extern io_connect_t apple_mobile_ap_nonce_service2_cached;
 
 #endif//X8A4_SERVICES_H
