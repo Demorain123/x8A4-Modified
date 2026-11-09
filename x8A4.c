@@ -24,9 +24,11 @@
 #include <x8A4/target_key.h>
 #include <x8A4/key_table_reader.h>
 
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
 static int x8A4_key_table_kread(uint64_t addr, void *out, size_t size) {
   return kread(addr, out, size);
 }
+#endif
 
 #if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
 /* Enforce the target identity inside the library too: public API callers can
@@ -1399,6 +1401,7 @@ _Static_assert(sizeof(struct x8A4_accel_key) ==
                sizeof(struct x8A4_target_key_record),
                "Expected accelerator key layout changed");
 
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
 static int x8A4_target_kread(uint64_t address, void *out, size_t size,
                             void *unused) {
   (void)unused;
@@ -1434,6 +1437,8 @@ static int x8A4_lookup_target_key(uint32_t chosen_key,
   return x8A4_scan_target_key(kernel_keys, count, chosen_key, result, index,
                              x8A4_target_kread, NULL);
 }
+
+#endif
 
 int x8A4_cli_get_accel_keys(uint32_t chosen_key) {
 #if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ)
