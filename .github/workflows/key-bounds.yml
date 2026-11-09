@@ -90,3 +90,15 @@ jobs:
             -DX8A4_ENABLE_LIVE_KEY_READ=ON
           cmake --build build-live-syntax --parallel 2
           echo "PASS: opt-in code compiles; M1 runtime NOT verified"
+      - name: Prepare OFF-by-default research build for binary audit
+        run: |
+          mkdir -p safe-build
+          cp build/x8A4_CLI build/libx8A4Research.1.dylib safe-build/
+          cp docs/DEVICE-SAFETY-STATUS.md safe-build/NOT-APPROVED-FOR-IPAD.md
+          (cd safe-build && shasum -a 256 x8A4_CLI libx8A4Research.1.dylib > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x8A4Research-arm64-DISABLED-${{ github.sha }}
+          path: safe-build/
+          if-no-files-found: error
+          retention-days: 7
