@@ -23,3 +23,30 @@ jobs:
           /tmp/x8a4-key-bounds-test
       - name: Regression checks for unsafe pointer math and CLI write commands
         run: python3 tests/source_regression.py
+
+  ios-arm64-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install iOS build tools
+        run: brew install cmake dpkg ldid-procursus
+      - name: Configure iOS ARM64 safety build (no live reads)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DRELEASE=ON \
+            -DX8A4_ENABLE_LIVE_KEY_READ=OFF
+      - name: Compile Mach-O ARM64 binary and library
+        run: cmake --build build --parallel 2
+      - name: Verify outputs and CLI imports
+        run: |
+          lipo build/x8A4_CLI -verify_arch arm64
+          lipo build/libx8A4.1.dylib -verify_arch arm64
+          if nm -arch arm64 -u build/x8A4_CLI | grep -E '_x8A4_cli_(set|clear)'; then
+            echo "STOP: mutating x8A4 CLI import detected"
+            exit 1
+          fi
+          file build/x8A4_CLI build/libx8A4.1.dylib
+          echo "PASS: experimental ARM64 build; NOT an on-device safety approval"
