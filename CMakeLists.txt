@@ -113,7 +113,7 @@ set(RPATH2 "/usr/lib")
 set_target_properties(x8A4_CLI
         PROPERTIES
 #        LINK_FLAGS "-Wl,-rpath,${RPATH} -Wl,-rpath,${RPATH2} -L/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/15.0.0/lib/darwin -lclang_rt.asan_abi_ios -lclang_rt.asan_ios_dynamic")
-        LINK_FLAGS "-Wl,-rpath,${RPATH} -Wl,-rpath,${RPATH2}")
+        LINK_FLAGS "-Wl,-rpath,@loader_path -Wl,-rpath,${RPATH} -Wl,-rpath,${RPATH2}")
 set_target_properties(x8A4_CLI
         PROPERTIES
 #        COMPILE_FLAGS "-Wall -Werror -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer")
