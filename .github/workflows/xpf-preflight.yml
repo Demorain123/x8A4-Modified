@@ -53,7 +53,7 @@ jobs:
             -DXPF_ARCHIVE_SHA256=\"${XPF_ARCHIVE_SHA256}\" \
             -DXPF_EXPECTED_INPUT_SHA256=\"16e2f6ab693b6d26a038c799e8b17132a5437d4fddd892b90c3d2a6ae8a1843c\" \
             tools/xpf_preflight.c Lib/libxpf.a Lib/libchoma.a \
-            -framework Compression -framework CoreFoundation \
+            -lcompression -framework CoreFoundation \
             -o dist/xpf_preflight
           ldid -S -Hsha256 -Cadhoc dist/xpf_preflight
           lipo dist/xpf_preflight -verify_arch arm64
