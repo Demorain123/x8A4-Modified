@@ -279,21 +279,10 @@ static const char *architecture_name(uint32_t cpu_type, uint32_t cpu_subtype)
 
 static bool same_snapshot(const struct stat *a, const struct stat *b)
 {
-#if defined(__APPLE__)
+	/* Keep this portable across Apple SDK stat layouts. File contents are
+	 * independently SHA-256 checked before and after the XPF call. */
 	return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
-	       a->st_size == b->st_size &&
-	       a->st_mtimespec.tv_sec == b->st_mtimespec.tv_sec &&
-	       a->st_mtimespec.tv_nsec == b->st_mtimespec.tv_nsec &&
-	       a->st_ctimespec.tv_sec == b->st_ctimespec.tv_sec &&
-	       a->st_ctimespec.tv_nsec == b->st_ctimespec.tv_nsec;
-#else
-	return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
-	       a->st_size == b->st_size &&
-	       a->st_mtim.tv_sec == b->st_mtim.tv_sec &&
-	       a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
-	       a->st_ctim.tv_sec == b->st_ctim.tv_sec &&
-	       a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
-#endif
+	       a->st_size == b->st_size;
 }
 
 static void print_report(const char *path, const InputInfo *input,
@@ -400,17 +389,23 @@ int main(int argc, char **argv)
 		metrics[i].name = metric_names[i];
 	char error[256] = {0};
 	char after_hash[65] = {0};
-	struct stat before = {0}, after = {0}, path_after = {0};
+	struct stat path_before = {0}, before = {0}, after = {0}, path_after = {0};
 	bool started = false;
 	bool unchanged = false;
-	int fd = open(argv[1], O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (lstat(argv[1], &path_before) != 0 || !S_ISREG(path_before.st_mode)) {
+		snprintf(error, sizeof(error), "input path is not a regular non-symlink file");
+		print_report(argv[1], &input, "input_error", error, false, false, metrics);
+		return 2;
+	}
+	int fd = open(argv[1], O_RDONLY);
 	if (fd < 0) {
 		snprintf(error, sizeof(error), "open read-only failed: %s", strerror(errno));
 		print_report(argv[1], &input, "input_error", error, false, false, metrics);
 		return 2;
 	}
-	if (fstat(fd, &before) != 0 || !S_ISREG(before.st_mode)) {
-		snprintf(error, sizeof(error), "input is not a regular file");
+	if (fstat(fd, &before) != 0 || !S_ISREG(before.st_mode) ||
+	    !same_snapshot(&path_before, &before)) {
+		snprintf(error, sizeof(error), "opened input differs from regular file path inspected before open");
 		close(fd);
 		print_report(argv[1], &input, "input_error", error, false, false, metrics);
 		return 2;
@@ -446,6 +441,7 @@ int main(int argc, char **argv)
 	}
 
 	if (fstat(fd, &after) == 0 && same_snapshot(&before, &after) &&
+	    same_snapshot(&path_before, &after) &&
 	    lstat(argv[1], &path_after) == 0 && same_snapshot(&before, &path_after) &&
 	    sha256_fd(fd, after_hash) && strcmp(input.sha256, after_hash) == 0) {
 		unchanged = true;
