@@ -126,7 +126,7 @@ jobs:
         run: |
           mkdir -p safe-build
           cp build/x8A4_CLI build/libx8A4Research.1.dylib safe-build/
-          cp docs/DEVICE-SAFETY-STATUS.md safe-build/NOT-APPROVED-FOR-IPAD.md
+          # Keep device-specific status notes out of uploaded build artifacts.
           (cd safe-build && shasum -a 256 x8A4_CLI libx8A4Research.1.dylib > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
