@@ -10,6 +10,17 @@ on:
       - "Lib/libxpf.a"
       - "Lib/libchoma.a"
       - "Include/XPF/xpf.h"
+  push:
+    branches:
+      - "codex/xpf-only-preflight"
+    paths:
+      - ".github/workflows/xpf-preflight.yml"
+      - "tools/xpf_preflight.c"
+      - "tests/xpf_preflight_mock.c"
+      - "tests/test_xpf_preflight.py"
+      - "Lib/libxpf.a"
+      - "Lib/libchoma.a"
+      - "Include/XPF/xpf.h"
 
 permissions:
   contents: read
