@@ -212,11 +212,9 @@ const char *get_kernel_path_legacy(void) {
 #endif
 
 /**
- * @brief           Kernel kread wrapper for reading from SMR pointers
- * @param[in]       addr
- * @param[out]      value
- * @param[in]       sz
- * @return          Zero on success
+ * @brief           Read and normalize an encoded kernel SMR pointer.
+ * @discussion      This transforms pointer bits only. It does not acquire an
+ *                  SMR read-side protection or stabilize the pointed object.
  */
 int kread_smr(uint64_t addr, uint64_t *value, size_t sz) {
   if (!value || sz != sizeof(*value) || !koffsets_cached ||
@@ -243,9 +241,9 @@ int kread_smr(uint64_t addr, uint64_t *value, size_t sz) {
 }
 
 /**
- * @brief           Unsign a PAC signed pointer addr with t1sz
- * @param[in]       addr
- * @return          Unsigned addr
+ * @brief           Set kernel-address high bits using the XPF T1SZ value.
+ * @discussion      This is address normalization, not PAC authentication. It
+ *                  does not validate a pointer or stabilize object lifetime.
  */
 uint64_t unsign_ptr(uint64_t *addr) {
   if (!addr) {

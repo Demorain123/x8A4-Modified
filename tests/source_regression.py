@@ -53,6 +53,8 @@ assert "if (!unsign_ptr(&next) || next == proc) break;" in kernel
 assert "koffsets_cached->t1sz_boot > 62" in kernel
 assert "sz != sizeof(*value)" in kernel
 assert "if (!unsign_ptr(value)) return -1;" in kernel
+assert "address normalization, not PAC authentication" in kernel
+assert "SMR read-side protection or stabilize the pointed object" in kernel
 
 # The IPC route is deliberately disabled until table bounds, exact layout,
 # and SMR/PAC-safe object lifetime handling are target-verified.
