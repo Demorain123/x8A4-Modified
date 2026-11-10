@@ -286,8 +286,10 @@ static bool same_snapshot(const struct stat *a, const struct stat *b)
 }
 
 static void print_report(const char *path, const InputInfo *input,
+	                     const char *xpf_start_status,
+	                     const char *xpf_start_error,
 	                     const char *status, const char *error,
-	                     bool started, bool unchanged,
+	                     bool unchanged,
 	                     const Metric metrics[4])
 {
 	printf("{\"schema\":\"xpf-preflight/1\",\"tool_version\":");
@@ -333,10 +335,11 @@ static void print_report(const char *path, const InputInfo *input,
 		json_string(input->uuid);
 	else
 		fputs("null", stdout);
-	printf("},\"xpf_start\":{\"status\":\"%s\",\"error\":",
-	       started ? "ok" : "not_started");
-	if (!started && error != NULL)
-		json_string(error);
+	printf("},\"xpf_start\":{\"status\":");
+	json_string(xpf_start_status);
+	printf(",\"error\":");
+	if (xpf_start_error != NULL && xpf_start_error[0] != '\0')
+		json_string(xpf_start_error);
 	else
 		fputs("null", stdout);
 	printf("},\"metrics\":{");
@@ -346,7 +349,8 @@ static void print_report(const char *path, const InputInfo *input,
 		json_string(metrics[i].name);
 		printf(":{\"status\":\"%s\",\"value_hex\":",
 		       metrics[i].resolved ? "resolved" :
-		       (started ? "unresolved" : "not_run"));
+		       (strcmp(xpf_start_status, "ok") == 0 ?
+		        "unresolved" : "not_run"));
 		if (metrics[i].resolved) {
 			printf("\"0x%016" PRIx64 "\",\"value_dec\":%" PRIu64,
 			       metrics[i].value, metrics[i].value);
@@ -388,43 +392,53 @@ int main(int argc, char **argv)
 	for (size_t i = 0; i < 4U; i++)
 		metrics[i].name = metric_names[i];
 	char error[256] = {0};
+	char xpf_start_error[256] = {0};
 	char after_hash[65] = {0};
 	struct stat path_before = {0}, before = {0}, after = {0}, path_after = {0};
-	bool started = false;
+	const char *xpf_start_status = "not_run";
 	bool unchanged = false;
 	if (lstat(argv[1], &path_before) != 0 || !S_ISREG(path_before.st_mode)) {
 		snprintf(error, sizeof(error), "input path is not a regular non-symlink file");
-		print_report(argv[1], &input, "input_error", error, false, false, metrics);
+		print_report(argv[1], &input, xpf_start_status, NULL,
+		             "input_error", error, false, metrics);
 		return 2;
 	}
 	int fd = open(argv[1], O_RDONLY);
 	if (fd < 0) {
 		snprintf(error, sizeof(error), "open read-only failed: %s", strerror(errno));
-		print_report(argv[1], &input, "input_error", error, false, false, metrics);
+		print_report(argv[1], &input, xpf_start_status, NULL,
+		             "input_error", error, false, metrics);
 		return 2;
 	}
 	if (fstat(fd, &before) != 0 || !S_ISREG(before.st_mode) ||
 	    !same_snapshot(&path_before, &before)) {
 		snprintf(error, sizeof(error), "opened input differs from regular file path inspected before open");
 		close(fd);
-		print_report(argv[1], &input, "input_error", error, false, false, metrics);
+		print_report(argv[1], &input, xpf_start_status, NULL,
+		             "input_error", error, false, metrics);
 		return 2;
 	}
 	if (!read_input_info(fd, &before, &input, error, sizeof(error))) {
 		close(fd);
-		print_report(argv[1], &input, "input_error", error, false, false, metrics);
+		print_report(argv[1], &input, xpf_start_status, NULL,
+		             "input_error", error, false, metrics);
 		return 2;
 	}
 	if (strcmp(input.sha256, XPF_EXPECTED_INPUT_SHA256) != 0) {
 		snprintf(error, sizeof(error), "input SHA-256 does not match the approved 21D61 kernelcache copy");
 		close(fd);
-		print_report(argv[1], &input, "input_error", error, false, false, metrics);
+		print_report(argv[1], &input, xpf_start_status, NULL,
+		             "input_error", error, false, metrics);
 		return 2;
 	}
 
-	started = xpf_start_with_kernel_path(argv[1]) != 0;
+	int start_result = xpf_start_with_kernel_path(argv[1]);
+	bool started = start_result == 0;
+	xpf_start_status = started ? "ok" : "failed";
 	if (!started) {
-		copy_xpf_error(error, sizeof(error), "xpf_start_with_kernel_path failed");
+		copy_xpf_error(xpf_start_error, sizeof(xpf_start_error),
+		               "xpf_start_with_kernel_path failed");
+		snprintf(error, sizeof(error), "%s", xpf_start_error);
 	} else {
 		/* Keep the four requested finder calls explicit and auditable. */
 		metrics[0].value = xpf_item_resolve("kernelConstant.T1SZ_BOOT");
@@ -456,7 +470,7 @@ int main(int argc, char **argv)
 	const char *status = started && metrics_ok && unchanged ? "ok" : "error";
 	if (error[0] == '\0' && !metrics_ok)
 		snprintf(error, sizeof(error), "one or more XPF finders returned zero");
-	print_report(argv[1], &input, status, error[0] != '\0' ? error : NULL,
-	             started, unchanged, metrics);
+	print_report(argv[1], &input, xpf_start_status, xpf_start_error,
+	             status, error[0] != '\0' ? error : NULL, unchanged, metrics);
 	return strcmp(status, "ok") == 0 ? 0 : 3;
 }

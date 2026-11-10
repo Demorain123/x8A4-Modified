@@ -66,6 +66,13 @@ jobs:
             echo "STOP: libkrw or x8A4 library dependency detected"
             exit 1
           fi
+          DEFINED_SYMBOLS="$(nm -g dist/xpf_preflight | awk '$2 == "T" {print $3}')"
+          for symbol in _xpf_start_with_kernel_path _xpf_item_resolve _xpf_get_error _xpf_stop; do
+            if ! printf '%s\n' "$DEFINED_SYMBOLS" | grep -Fxq "$symbol"; then
+              echo "STOP: expected linked XPF API symbol missing: $symbol"
+              exit 1
+            fi
+          done
           if nm -g dist/xpf_preflight | grep -Ei '_x8A4_|_krw_|_kwrite|_kread'; then
             echo "STOP: forbidden x8A4 or kernel-access symbol present"
             exit 1

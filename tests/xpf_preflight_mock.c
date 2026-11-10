@@ -21,7 +21,15 @@ static const char *mock_error;
 
 int xpf_start_with_kernel_path(const char *kernel_path)
 {
-	return kernel_path != NULL && kernel_path[0] != '\0';
+	if (getenv("XPF_MOCK_START_FAIL") != NULL) {
+		mock_error = "mock initialization failure";
+		return -1;
+	}
+	if (kernel_path == NULL || kernel_path[0] == '\0') {
+		mock_error = "mock kernel path missing";
+		return -1;
+	}
+	return 0;
 }
 
 uint64_t xpf_item_resolve(const char *name)

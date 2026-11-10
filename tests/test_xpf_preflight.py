@@ -108,11 +108,24 @@ def main() -> None:
 	            "kernelSymbol.allproc": "0x1111222233334444",
         }, values
 
+        failed_start_result, failed_start_report = run_json(
+            binary, fixture, {"XPF_MOCK_START_FAIL": "1"}
+        )
+        assert failed_start_result.returncode == 3
+        assert failed_start_report["status"] == "error"
+        assert failed_start_report["xpf_start"]["status"] == "failed"
+        assert failed_start_report["xpf_start"]["error"] == "mock initialization failure"
+        assert all(
+            metric["status"] == "not_run" and metric["value_hex"] is None
+            for metric in failed_start_report["metrics"].values()
+        )
+
         failed_metric_result, failed_metric_report = run_json(
             binary, fixture, {"XPF_MOCK_FAIL_INDEX": "2"}
         )
         assert failed_metric_result.returncode == 3
         assert failed_metric_report["status"] == "error"
+        assert failed_metric_report["xpf_start"]["status"] == "ok"
         assert failed_metric_report["metrics"]["kernelStruct.proc.struct_size"]["status"] == "unresolved"
         assert failed_metric_report["metrics"]["kernelStruct.proc.struct_size"]["error"] == "mock finder failure"
 
@@ -121,7 +134,7 @@ def main() -> None:
         changed_result, changed_report = run_json(binary, changed)
         assert changed_result.returncode == 2
         assert changed_report["status"] == "input_error"
-        assert changed_report["xpf_start"]["status"] == "not_started"
+        assert changed_report["xpf_start"]["status"] == "not_run"
         assert "does not match" in changed_report["error"]
 
         invalid = root / "not-a-kernelcache"
@@ -129,7 +142,7 @@ def main() -> None:
         invalid_result, invalid_report = run_json(binary, invalid)
         assert invalid_result.returncode == 2
         assert invalid_report["status"] == "input_error"
-        assert invalid_report["xpf_start"]["status"] == "not_started"
+        assert invalid_report["xpf_start"]["status"] == "not_run"
         assert "shorter than a Mach-O" in invalid_report["error"]
 
         link = root / "symlink-to-fixture"
