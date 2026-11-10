@@ -25,6 +25,24 @@ entry_bits(uint32_t name, uint32_t capability_type) {
          (capability_type << X8A4_IPC_ENTRY_TYPE_SHIFT_XNU_10002_81_5);
 }
 
+static void
+assert_addresses_empty(const struct x8a4_ipc_entry_addresses *addresses) {
+  assert(addresses->index == 0);
+  assert(addresses->entry == 0);
+  assert(addresses->object == 0);
+  assert(addresses->bits == 0);
+}
+
+static void
+seed_addresses(struct x8a4_ipc_entry_addresses *addresses) {
+  *addresses = (struct x8a4_ipc_entry_addresses){
+      .index = UINT32_C(0xfeed),
+      .entry = UINT64_C(0xfeedface),
+      .object = UINT64_C(0xdeadbeef),
+      .bits = UINT64_C(0xcafebabe),
+  };
+}
+
 int main(void) {
   struct x8a4_ipc_entry_addresses addresses = {0};
   uint32_t type = 0;
@@ -48,34 +66,62 @@ int main(void) {
          X8A4_IPC_INVALID_NAME);
   assert(x8a4_ipc_port_name_index(UINT32_C(0x00000042), &type) ==
          X8A4_IPC_INDEX_ZERO);
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_plan(UINT32_C(0x00000042), &kReferenceLayout, true,
                              8, kTableBase, &addresses) == X8A4_IPC_INDEX_ZERO);
+  assert_addresses_empty(&addresses);
 
   /* Unknown capacity, unsupported layout, and an out-of-range index fail. */
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_plan(kPortName, &kReferenceLayout, false, 8,
                              kTableBase, &addresses) == X8A4_IPC_UNKNOWN_CAPACITY);
-  assert(addresses.entry == 0 && addresses.object == 0 && addresses.bits == 0);
+  assert_addresses_empty(&addresses);
   struct x8a4_ipc_entry_layout unverified = kReferenceLayout;
   unverified.id = X8A4_IPC_LAYOUT_UNVERIFIED;
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_plan(kPortName, &unverified, true, 8,
                              kTableBase, &addresses) == X8A4_IPC_UNSUPPORTED_LAYOUT);
+  assert_addresses_empty(&addresses);
   struct x8a4_ipc_entry_layout malformed = kReferenceLayout;
   malformed.entry_size = UINT32_C(0x20);
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_plan(kPortName, &malformed, true, 8,
                              kTableBase, &addresses) == X8A4_IPC_UNSUPPORTED_LAYOUT);
+  assert_addresses_empty(&addresses);
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_plan(kPortName, &kReferenceLayout, true, 7,
                              kTableBase, &addresses) == X8A4_IPC_INDEX_OUT_OF_BOUNDS);
+  assert_addresses_empty(&addresses);
 
   /* Multiplication and base-plus-offset overflow are rejected. */
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_calculate_addresses(kTableBase, UINT64_MAX,
                                             &kReferenceLayout, &addresses) ==
          X8A4_IPC_ADDRESS_OVERFLOW);
+  assert_addresses_empty(&addresses);
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_calculate_addresses(UINT64_MAX - UINT64_C(100), 7,
                                             &kReferenceLayout, &addresses) ==
          X8A4_IPC_ADDRESS_OVERFLOW);
+  assert_addresses_empty(&addresses);
+  seed_addresses(&addresses);
   assert(x8a4_ipc_entry_calculate_addresses(
              UINT64_MAX - UINT64_C(168), 7, &kReferenceLayout, &addresses) ==
          X8A4_IPC_ADDRESS_OVERFLOW);
+  assert_addresses_empty(&addresses);
+  seed_addresses(&addresses);
+  assert(x8a4_ipc_entry_calculate_addresses(kTableBase, 0,
+                                            &kReferenceLayout, &addresses) ==
+         X8A4_IPC_INDEX_ZERO);
+  assert_addresses_empty(&addresses);
+
+  /* The reference's 5-bit type field cannot encode unknown type bits. */
+  for (uint32_t type_bits = 0; type_bits <= UINT32_C(0x1f); ++type_bits) {
+    const enum x8a4_ipc_validation_status status =
+        x8a4_ipc_entry_validate_bits(kPortName, &kReferenceLayout,
+                                    entry_bits(kPortName, type_bits), 0, NULL);
+    assert(status != X8A4_IPC_INVALID_TYPE_BITS);
+  }
 
   /* Generation mismatch, empty rights, and required-capability mismatch. */
   assert(x8a4_ipc_entry_validate_bits(kPortName, &kReferenceLayout,

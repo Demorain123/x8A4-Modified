@@ -2,7 +2,7 @@
  * Pure IPC name, entry-bound, generation, and capability checks.
  *
  * The only concrete layout accepted here is a reference fixture derived from
- * XNU xnu-10002.81.5. It is deliberately NOT marked as the iPad13,4 / 21D61
+ * XNU xnu-10002.81.5. It is deliberately NOT marked as the exact 21D61
  * layout. Production code must not opt into it without target-level evidence.
  * This header never dereferences kernel memory and provides no SMR/PAC safety.
  */
@@ -40,6 +40,7 @@ enum x8a4_ipc_validation_status {
   X8A4_IPC_ADDRESS_OVERFLOW,
   X8A4_IPC_GENERATION_MISMATCH,
   X8A4_IPC_TYPE_NONE,
+  /* Defensive for future layouts; unreachable with the current 5-bit mask. */
   X8A4_IPC_INVALID_TYPE_BITS,
   X8A4_IPC_TYPE_MISMATCH
 };
@@ -104,9 +105,8 @@ x8a4_ipc_entry_calculate_addresses(
   if (addresses == 0) {
     return X8A4_IPC_INVALID_ARGUMENT;
   }
-  addresses->entry = 0;
-  addresses->object = 0;
-  addresses->bits = 0;
+  /* Every failure leaves the complete output record, including index, empty. */
+  *addresses = (struct x8a4_ipc_entry_addresses){0};
   if (index == 0) {
     return X8A4_IPC_INDEX_ZERO;
   }
@@ -214,6 +214,11 @@ x8a4_ipc_entry_validate_bits(uint32_t name,
   if (type == 0) {
     return X8A4_IPC_TYPE_NONE;
   }
+  /*
+   * Unreachable for this reference layout: type_mask exposes exactly bits
+   * 0..4 and known_type_bits is 0x1f. Keep this guard for any future
+   * supported layout that widens the field or narrows its known-bit set.
+   */
   if ((type & ~layout->known_type_bits) != 0) {
     return X8A4_IPC_INVALID_TYPE_BITS;
   }
