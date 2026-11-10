@@ -16,6 +16,7 @@
 #include <libkrw.h>
 #include <sys/mount.h>
 #include <x8A4/Kernel/kernel.h>
+#include <x8A4/Kernel/ipc_entry_validation.h>
 #include <x8A4/Kernel/offsets.h>
 #include <x8A4/Kernel/slide.h>
 #include <x8A4/Services/services.h>
@@ -322,50 +323,27 @@ uint64_t get_our_task(void) {
  * @return          Address of an ipc_port in kernel space
  */
 uint64_t get_ipc_port(mach_port_name_t port_name) {
-  if (MACH_PORT_VALID(port_name) == 0) {
-    x8A4_log_error("Port 0x%X is invalid!\n", port_name);
+  uint32_t index = 0;
+  const enum x8a4_ipc_validation_status name_status =
+      x8a4_ipc_port_name_index((uint32_t)port_name, &index);
+  if (name_status != X8A4_IPC_VALID) {
+    x8A4_log_error("Refusing invalid Mach port name 0x%08X (status=%d).\n",
+                   (uint32_t)port_name, name_status);
     return 0;
   }
-  uint64_t task = get_our_task();
-  if (task == 0) {
-    x8A4_log_error("Task is NULL!\n", "");
-    return 0;
-  }
-  uint64_t itk_space = 0;
-  int ret = kread(task + koffsets_cached->itk_space, &itk_space, 8);
-  if (ret || !itk_space) {
-    x8A4_log_error("Failed to read kernel task itk_space! (%d:0x%016llX)\n", ret, itk_space);
-    return 0;
-  }
-  if (!unsign_ptr(&itk_space)) {
-    x8A4_log_error("Kernel task itk_space pointer is invalid after normalization.\n", "");
-    return 0;
-  }
-  uint64_t table = 0;
-  if (koffsets_cached->table_smr) {
-    ret =
-        kread_smr(itk_space + koffsets_cached->task_itk_space_table, &table, 8);
-  } else {
-    ret = kread(itk_space + koffsets_cached->task_itk_space_table, &table, 8);
-  }
-  if (ret || !table) {
-    x8A4_log_error("Failed to read kernel task itk_space table! (%d:0x%016llX)\n", ret, table);
-    return 0;
-  }
-  if (!unsign_ptr(&table)) {
-    x8A4_log_error("Kernel IPC table pointer is invalid after normalization.\n", "");
-    return 0;
-  }
-  uint64_t port = 0;
-  ret = kread(
-      table + (MACH_PORT_INDEX(port_name) * koffsets_cached->ipc_entry_size) +
-          koffsets_cached->ipc_entry_object,
-      &port, 8);
-  if (ret || !unsign_ptr(&port)) {
-    x8A4_log_error("Failed to read or normalize port from kernel ipc_entry object! (%d)\\n", ret);
-    return 0;
-  }
-  return port;
+  (void)index;
+
+  /*
+   * Fail closed before any IPC-space/table read. For 21D61, this source tree
+   * has no target-verified KALLOC_ARRAY capacity decoder, exact entry-layout
+   * proof, or way to hold ipc_space's read lock / SMR lifetime while reading.
+   * Bounds and generation/type checks alone would not make that read safe.
+   */
+  x8A4_log_error(
+      "Refusing IPC entry lookup: 21D61 table capacity/layout and SMR-safe "
+      "entry lifetime are not verified. No IPC table memory was read.\n",
+      "");
+  return 0;
 }
 
 /**
@@ -374,21 +352,12 @@ uint64_t get_ipc_port(mach_port_name_t port_name) {
  * @return          Address of kobject in kernel space
  */
 uint64_t get_ipc_kobject_from_iomachport(uint64_t port_addr) {
-  if (!koffsets_cached->ipc_port_kobject_is_iomachport) {
-    x8A4_log_error("Ipc_kobject is not wrapped by IOMachPort on this version!\n", "");
-    return 0;
-  }
-  if (!unsign_ptr(&port_addr)) {
-    x8A4_log_error("IOMachPort port address is invalid after normalization.\n", "");
-    return 0;
-  }
-  uint64_t kobject = 0;
-  int ret = kread(port_addr + koffsets_cached->iomachport_object, &kobject, 8);
-  if (ret || !unsign_ptr(&kobject)) {
-    x8A4_log_error("Failed to read or normalize IOMachPort object! (%d)\n", ret);
-    return 0;
-  }
-  return kobject;
+  (void)port_addr;
+  x8A4_log_error(
+      "Refusing IOMachPort.object read: target field layout and pointer "
+      "authentication/lifetime are not verified.\n",
+      "");
+  return 0;
 }
 
 /**
@@ -397,21 +366,12 @@ uint64_t get_ipc_kobject_from_iomachport(uint64_t port_addr) {
  * @return          Address of kobject in kernel space
  */
 uint64_t get_ipc_kobject(io_service_t service) {
-  uint64_t port = get_ipc_port(service);
-  if (port == 0) {
-    x8A4_log_error("Ipc port address is zero!\n", "");
-    return 0;
-  }
-  uint64_t kobject = 0;
-  int ret = kread(port + koffsets_cached->ipc_port_kobject, &kobject, 8);
-  if (ret || !unsign_ptr(&kobject)) {
-    x8A4_log_error("Failed to read or normalize kobject from ipc port! (%d)\n", ret);
-    return 0;
-  }
-  if (koffsets_cached->ipc_port_kobject_is_iomachport) {
-    kobject = get_ipc_kobject_from_iomachport(kobject);
-  }
-  return kobject;
+  (void)service;
+  x8A4_log_error(
+      "Refusing ipc_port.kobject read: the 21D61 target field layout and "
+      "PAC/lifetime handling are not verified.\n",
+      "");
+  return 0;
 }
 
 #if 0

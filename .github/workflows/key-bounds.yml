@@ -30,6 +30,12 @@ jobs:
             -fsanitize=address,undefined -fno-omit-frame-pointer \
             -IInclude tests/key_table_reader_test.c -o /tmp/x8a4-key-reader-test
           /tmp/x8a4-key-reader-test
+      - name: Validate IPC entry names, bounds, generation and type under sanitizers
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/ipc_entry_validation_test.c -o /tmp/x8a4-ipc-entry-test
+          ASAN_OPTIONS=detect_leaks=0 /tmp/x8a4-ipc-entry-test
       - name: Test private raw-record archive under ASan and UBSan
         run: |
           cc -std=c17 -Wall -Wextra -Werror -pedantic \

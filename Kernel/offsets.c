@@ -130,10 +130,12 @@ int offsets_init(void) {
   if (ios_1640) {
   }
   if (ios_1700) {
+    /*
+     * Candidate offsets cross-checked against Dopamine 3.0.13 source only.
+     * They are not exact 21D61 binary/layout proof. The IPC accessors stay
+     * fail-closed until table bounds, PAC and SMR lifetime are established.
+     */
     koffsets_cached->ipc_port_kobject = 0x48;
-    /* Dopamine 3.0.13 assigns IOMachPort.object=0x30 in its iOS 17+
-     * layout branch, outside the hasSPTM-only structure adjustments.
-     * Cross-source evidence only: the 21D61 kernel path remains a device gate. */
     koffsets_cached->ipc_port_kobject_is_iomachport = 1;
     koffsets_cached->iomachport_object = 0x30;
   }

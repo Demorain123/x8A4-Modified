@@ -50,17 +50,38 @@ assert target.count("x8A4_secure_clear(&entry") == 4
 
 # Each pointer read is normalized before its next dereference.
 assert "if (!unsign_ptr(&next) || next == proc) break;" in kernel
-assert "if (!unsign_ptr(&itk_space))" in kernel
-assert "if (!unsign_ptr(&table))" in kernel
-assert "if (ret || !unsign_ptr(&port))" in kernel
-assert "if (!unsign_ptr(&port_addr))" in kernel
-assert "if (ret || !unsign_ptr(&kobject))" in kernel
 assert "koffsets_cached->t1sz_boot > 62" in kernel
 assert "sz != sizeof(*value)" in kernel
 assert "if (!unsign_ptr(value)) return -1;" in kernel
 
+# The IPC route is deliberately disabled until table bounds, exact layout,
+# and SMR/PAC-safe object lifetime handling are target-verified.
+ipc_start = kernel.index("uint64_t get_ipc_port(mach_port_name_t port_name) {")
+ipc_end = kernel.index("/**", ipc_start)
+ipc_lookup = kernel[ipc_start:ipc_end]
+assert "x8a4_ipc_port_name_index" in ipc_lookup
+assert "21D61 table capacity/layout" in ipc_lookup
+assert "No IPC table memory was read" in ipc_lookup
+assert "kread(" not in ipc_lookup and "kread_smr(" not in ipc_lookup
+assert "get_our_task(" not in ipc_lookup
+
+for disabled_name in ("get_ipc_kobject_from_iomachport", "get_ipc_kobject"):
+    start = kernel.index("uint64_t " + disabled_name + "(")
+    end = kernel.index("/**", start)
+    body = kernel[start:end]
+    assert "not verified" in body
+    assert "kread(" not in body
+
+ipc_validation = (root / "Include/x8A4/Kernel/ipc_entry_validation.h").read_text()
+assert "X8A4_IPC_UNKNOWN_CAPACITY" in ipc_validation
+assert "X8A4_IPC_INDEX_OUT_OF_BOUNDS" in ipc_validation
+assert "X8A4_IPC_GENERATION_MISMATCH" in ipc_validation
+assert "X8A4_IPC_TYPE_MISMATCH" in ipc_validation
+assert "X8A4_IPC_LAYOUT_XNU_10002_81_5_REFERENCE" in ipc_validation
+
 assert "koffsets_cached->ipc_port_kobject_is_iomachport = 1;" in offsets
 assert "koffsets_cached->iomachport_object = 0x30;" in offsets
+assert "Candidate offsets cross-checked against Dopamine 3.0.13 source only." in offsets
 
 for forbidden in (
     "x8A4_cli_set_cryptex_seed",
