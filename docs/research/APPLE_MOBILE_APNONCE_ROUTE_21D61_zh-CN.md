@@ -147,3 +147,10 @@ _generateNonce 在 hash 成功后会进入 nonce save 处理；该调用返回�
 - [原版 x8A4 的 C8 调用](https://github.com/Cryptiiiic/x8A4/blob/99a79f70bc7c90b7bbfcd87b469481581ca43162/Kernel/kernel.c)。
 
 本轮只进行了离线反汇编和源码阅读；没有运行硬件请求、设备测试、mock 或生产代码测试。
+
+
+## 2026-11-11 阶段收尾与现存材料
+
+本路线没有产生 key 或新记录，也没有调用 selector 0xC8。项目已存在一份正常模式 lockdown GetValue("ApNonce") 成功记录（用户确认的归档事实；本轮未重读设备）。它证明 APNonce 曾被取得，但单凭成功记录不能证明内部操作完全没有状态副作用，也不导出 key。
+
+历史 NOR/IM4R generator 与另一份现场 generator 取值不同，须按各自来源分别保留；Cryptex Seed 记录存在，但与独立 boot nonce 的精确对应尚未验证。实际 generator、seed 和 APNonce 值不写入仓库。阶段总表与恢复条件见 [设备安全状态与材料分级](../DEVICE-SAFETY-STATUS.md)。设备专属 0x8A3/0x8A4 key value 及完整 52-byte record 仍未取得。
