@@ -82,6 +82,10 @@ _generateNonceHash 中的关键配置位于 VM 0xfffffe00091c7064..91c70c4 / 文
 
 调用通过 AppleMobileApNonce 持有的 provider，使用 vtable slot +0x550；不是普通进程调用被拒绝的 IOAESAcceleratorUserClient selector 1。目标代码之后把 AES 结果交给所配置的 hash 路径并输出 nonce。故此路线实质区别是：受信任的 Apple 内核服务自己使用内部 handle 0x8A3，只把派生结果返回给有权限的调用者，不让用户态取得 key 或自行解引用 kobject。
 
+### 对象安全与权限风险
+
+此路径走 IOKit userclient 的结构式 copyout；调用者不需要自行解析 ipc_entry、ipc_port 或 kobject，也不需要在用户态解码 PAC 指针或维护 SMR 读侧临界区。因此它避开了原有手工 IPC 表遍历的对象生命周期/PAC/SMR 风险。这个判断只针对“调用者不用手工持有原始内核对象”，不证明 Apple 服务内部无竞态或无内核缺陷；目标函数本身仍有认证的间接 provider 调用。该 userclient/selector 是私有 IOKit 接口，不是公开给普通第三方应用的稳定 API。当前目标的 root privilege gate 是确定证据；是否还必须有 AppleMobileApNonceUserClient 类 entitlement、以及 stock 进程是否已有该 entitlement，仍未从 21D61 rootfs 证实。
+
 ### 保存副作用与 generator 查询
 
 _generateNonce 在 hash 成功后会进入 nonce save 处理；该调用返回失败时，调用者走到目标 cstring “unable save nonce” 的错误分支（文件偏移 0x407662）。同一目标 image 还包含 _saveNonce、_saveNonceInNVRAM、_clearNonceFromNVRAM 和 _readNonceFromNVRAM 的方法名与代码。静态代码足以说明 0xC8 不应被当作已证明无副作用的查询；其具体保存对象/当前 generator 是否会变化，不在本轮调用验证。
