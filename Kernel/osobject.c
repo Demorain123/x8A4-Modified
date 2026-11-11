@@ -76,7 +76,7 @@ uint32_t get_os_dict_size(uint64_t dict) {
     return 0;
   }
   uint32_t dict_size = 0;
-  int ret = kread(dict + koffsets_cached->os_dict_size, &dict_size, 8);
+  int ret = kread(dict + koffsets_cached->os_dict_size, &dict_size, sizeof(dict_size));
   if (ret || !dict_size) {
     x8A4_log_error("Failed to read kernel os dict size from os dict! (%d:0x%08X)\n", ret, dict_size);
     return 0;
@@ -129,14 +129,14 @@ uint64_t get_entry_from_os_dict(uint64_t dict, enum os_type entry_type,
     return 0;
   }
   uint64_t os_dict_size = get_os_dict_size(dict);
-  if (!os_dict_size) {
+  if (!os_dict_size || os_dict_size > 1024) {
     x8A4_log_error("Failed to get entry from os dict, os dict size is zero!\n", "");
     return 0;
   }
   int ret;
   uint64_t data = 0;
   struct os_dict_entry current_entry = {0};
-  for (int i = 0; i < os_dict_size + 1; i++) {
+  for (uint32_t i = 0; i < os_dict_size; i++) {
     ret = kread(os_dict_entry + (i * sizeof(struct os_dict_entry)),
                 &current_entry, sizeof(struct os_dict_entry));
     if (ret || !current_entry.key) {
@@ -145,14 +145,14 @@ uint64_t get_entry_from_os_dict(uint64_t dict, enum os_type entry_type,
     }
     uint32_t key_len = get_os_metabase_size(current_entry.key);
     extract_os_size(&key_len);
-    if (!key_len) {
+    if (!key_len || key_len >= PATH_MAX) {
       continue;
     }
     uint64_t key = os_object_cast(current_entry.key, OS_STRING);
     if (!key) {
       continue;
     }
-    char key_string[PATH_MAX];
+    char key_string[PATH_MAX] = {0};
     ret = kread(key, key_string, key_len);
     if (ret || key_string[0] == '\0') {
       continue;

@@ -439,30 +439,5 @@ uint32_t get_hash_len(void) {
  * @param[in]       value
  * @return          Zero on success
  */
-int set_nvram_entry(io_registry_entry_t nvram_entry, const char *key, const char *value) {
-  if(!key || !strlen(key)) {
-    fprintf(stderr, "[-]: %s: Invalid entry key!\n", __FUNCTION__);
-    return -1;
-  }
-  if(!value || !strlen(value)) {
-    fprintf(stderr, "[-]: %s: Invalid entry value!\n", __FUNCTION__);
-    return -1;
-  }
-  CFStringRef cf_key = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, key, kCFStringEncodingASCII, kCFAllocatorNull);
-  if(!cf_key) {
-    fprintf(stderr, "[-]: %s: Failed to allocate %s as a CFString!\n", __FUNCTION__, key);
-    return -1;
-  }
-  CFStringRef cf_value = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, value, kCFStringEncodingASCII, kCFAllocatorNull);
-  if(!cf_value) {
-    fprintf(stderr, "[-]: %s: Failed to allocate %s as a CFString!\n", __FUNCTION__, value);
-    return -1;
-  }
-  kern_return_t ret = IORegistryEntrySetCFProperty(nvram_entry, cf_key, cf_value);
-  if(ret) {
-    if(verbose_cached)
-      fprintf(stderr, "[-]: %s: Failed to set nvram CFProperty %s as a %s!\n", __FUNCTION__, key, value);
-    return -1;
-  }
-  return 0;
-}
+/* Removed mutation API set_nvram_entry: read-only research build. */
+

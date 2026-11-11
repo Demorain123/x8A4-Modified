@@ -19,6 +19,50 @@
 #include <x8A4/x8A4.h>
 #include <x8A4/Kernel/kpf.h>
 #include <libkrw.h>
+#include <sys/sysctl.h>
+#include <x8A4/key_bounds.h>
+#include <x8A4/target_key.h>
+#include <x8A4/key_table_reader.h>
+#include <x8A4/private_record_archive.h>
+
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ && \
+    defined(X8A4_ENABLE_LEGACY_TABLE_READ) && X8A4_ENABLE_LEGACY_TABLE_READ
+static int x8A4_key_table_kread(uint64_t addr, void *out, size_t size) {
+  return kread(addr, out, size);
+}
+#endif
+
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+/* Enforce the target identity inside the library too: public API callers can
+ * bypass x8A4_CLI.c. This guards version selection, not structure offsets.
+ */
+static int x8A4_target_runtime_matches(void) {
+  char model[64] = {0};
+  char osrelease[64] = {0};
+  char build[64] = {0};
+  size_t size = sizeof(model);
+  if (geteuid() != 0 ||
+      sysctlbyname("hw.machine", model, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(model) || model[size - 1] != '\0' ||
+      strcmp(model, "iPad13,4") != 0)
+    return 0;
+  size = sizeof(osrelease);
+  if (sysctlbyname("kern.osrelease", osrelease, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(osrelease) || osrelease[size - 1] != '\0' ||
+      strcmp(osrelease, "23.3.0") != 0)
+    return 0;
+  size = sizeof(build);
+  if (sysctlbyname("kern.osversion", build, &size, NULL, 0) != 0 ||
+      size == 0 || size > sizeof(build) || build[size - 1] != '\0' ||
+      strcmp(build, "21D61") != 0)
+    return 0;
+  return 1;
+}
+#endif
+
+
+_Static_assert(sizeof(struct x8A4_accel_key) == 52,
+               "IOAESAccelerator key record layout changed");
 
 /* Cached Variables */
 int init_done = 0;
@@ -60,6 +104,12 @@ int x8A4_init(void) {
     x8A4_log_error("x8A4 Requires running with sudo!\n", "");
     return -1;
   }
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+  if (!x8A4_target_runtime_matches()) {
+    x8A4_log_error("STOP: expected root on iPad13,4 / Darwin 23.3.0 / build 21D61; no kernel access.\n", "");
+    return -1;
+  }
+#endif
   if(init_done) {
     return 0;
   }
@@ -77,8 +127,16 @@ int x8A4_init(void) {
   if (offsets_init()) {
     return -1;
   }
-  gc_cached = calloc(1, 1024);
-  gc_d_cached = calloc(1, 1024);
+  gc_cached = calloc(128, sizeof(*gc_cached));
+  gc_d_cached = calloc(128, sizeof(*gc_d_cached));
+  if (!gc_cached || !gc_d_cached) {
+    free(gc_cached);
+    free(gc_d_cached);
+    gc_cached = NULL;
+    gc_d_cached = NULL;
+    x8A4_log_error("Unable to allocate cleanup tables.\n", "");
+    return -1;
+  }
   init_done = 1;
   return 0;
 }
@@ -90,14 +148,6 @@ void x8A4_free(void) {
   xpf_free_fileset_sections();
   if (domains_cached) {
     free(domains_cached);
-  }
-  if (apple_mobile_ap_nonce_service2_cached != IO_OBJECT_NULL) {
-    x8A4_log_debug("Closing apple_mobile_ap_nonce_service2_cached\n", "");
-    IOServiceClose(apple_mobile_ap_nonce_service2_cached);
-  }
-  if(apple_mobile_ap_nonce_service_cached != IO_OBJECT_NULL) {
-    x8A4_log_debug("Releasing apple_mobile_ap_nonce_service_cached\n", "");
-    IOObjectRelease(apple_mobile_ap_nonce_service_cached);
   }
   if(kernel_path_cached) {
     free(kernel_path_cached);
@@ -784,17 +834,20 @@ uint8_t *x8A4_get_cryptex_nonce(uint32_t *nonce_size) {
     x8A4_log_error("Failed to get IOAESAccelerator keys! (%d:0x%016llX)\n", keys_count, keys);
     return NULL;
   }
-  uint32_t chosen_key = 0x8A4;
-  uint32_t struct_size = sizeof(struct x8A4_accel_key);
-  for (int i = 0; i < keys_count; i++) {
-    struct x8A4_accel_key *cur_key = keys + (struct_size * i);
-    if (cur_key->key_id == chosen_key) {
-      keys = cur_key;
+  struct x8A4_accel_key *selected = NULL;
+  for (uint32_t i = 0; i < keys_count; ++i) {
+    if (keys[i].key_id == 0x8A4 && keys[i].generated == 1 &&
+        (keys[i].key_sz == 16 || keys[i].key_sz == 128)) {
+      selected = &keys[i];
       break;
     }
   }
-  uint32_t *cryptex_key_key = &keys->key[0];
-  uint32_t *cryptex_key_iv = &keys->iv[0];
+  if (!selected) {
+    x8A4_log_error("A valid 0x8A4 key was not found.\n", "");
+    return NULL;
+  }
+  uint32_t *cryptex_key_key = &selected->key[0];
+  uint32_t *cryptex_key_iv = &selected->iv[0];
   uint64_t seed_encrypt[] = { *(uint64_t *)&seed[0],  *(uint64_t *)&seed[8]};
   size_t encrypted_size = 0;
   if(CCCrypt(kCCEncrypt, kCCAlgorithmAES128, 0, cryptex_key_key, kCCKeySizeAES128, cryptex_key_iv, seed_encrypt, sizeof(seed_encrypt), seed_encrypt, sizeof(seed_encrypt), &encrypted_size) != kCCSuccess || encrypted_size != sizeof(seed_encrypt)) {
@@ -823,39 +876,8 @@ uint8_t *x8A4_get_cryptex_nonce(uint32_t *nonce_size) {
  * @brief           Syncs nvram ram with a list of keys
  * @return          Zero on success
  */
-int x8A4_sync_nvram(void) {
-  const char *delete_me_key = "delete_me_key";
-  const char *delete_me_val = "delete_me_val";
-  int ret = 0;
-  const char *key_list[] = {
-      kBootNoncePropertyKey,
-      kNonceSeedsPropertyKey,
-      kKRNC1BTPropertyKey
-  };
-  for(int i = 0; i < 3; i++) {
-    ret = set_nvram_entry(get_dtre_options(), delete_me_key, delete_me_val);
-    if (ret) {
-      x8A4_log_error("Failed to sync nvram, set nvram(%s:%s) returned NULL!",
-                     delete_me_key, delete_me_val);
-      return -1;
-    }
-    ret = set_nvram_entry(get_dtre_options(), kIONVRAMDeletePropertyKey,
-                          delete_me_key);
-    if (ret) {
-      x8A4_log_error("Failed to sync nvram, set nvram(%s:%s) returned NULL!",
-                     kIONVRAMDeletePropertyKey, delete_me_key);
-      return -1;
-    }
-    ret = set_nvram_entry(get_dtre_options(), kIONVRAMForceSyncNowPropertyKey,
-                          key_list[i]);
-    if (ret) {
-      x8A4_log_error("Failed to sync nvram, set nvram(%s:%s) returned NULL!",
-                     kIONVRAMForceSyncNowPropertyKey, key_list[i]);
-      return -1;
-    }
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_sync_nvram: read-only research build. */
+
 
 /**
  * @brief           Get boot-nonce OS dict variant
@@ -884,27 +906,8 @@ uint8_t *x8A4_get_boot_nonce_os_dict(uint32_t *generator_size) {
  * @param[out]      generator_size
  * @return
  */
-int x8A4_set_boot_nonce_os_dict(uint8_t *generator, uint32_t generator_size) {
-  if (!generator) {
-    x8A4_log_error("Failed to set boot-nonce, out generator pointer is NULL!\n", "");
-    return -1;
-  }
-  if (!generator_size) {
-    x8A4_log_error("Failed to set boot-nonce, out generator size pointer is NULL!\n", "");
-    return -1;
-  }
-  uint64_t nvram_dict = get_service_nvram_dict(get_dtre_options());
-  if (!nvram_dict) {
-    x8A4_log_error("Failed to get boot-nonce, nvram dict is NULL!\n", "");
-    return -1;
-  }
-  int ret = set_nvram_entry_bytes(nvram_dict, kBootNoncePropertyKey, generator, generator_size, OS_STRING);
-  if (ret) {
-    x8A4_log_error("Failed to set boot-nonce!\n", "");
-    return -1;
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_set_boot_nonce_os_dict: read-only research build. */
+
 
 /**
  * @brief           Set nonce-seeds OS dict variant
@@ -912,49 +915,8 @@ int x8A4_set_boot_nonce_os_dict(uint8_t *generator, uint32_t generator_size) {
  * @param[in]       domain_index
  * @return
  */
-int x8A4_set_nonce_seeds_os_dict(uint8_t *seed, int domain_index) {
-  if (!seed) {
-    x8A4_log_error("Failed to set nonce seed, seed is NULL!\n", "");
-    return -1;
-  }
-  uint64_t nvram_dict = get_service_nvram_dict(get_dtre_options());
-  if (!nvram_dict) {
-    x8A4_log_error("Failed to set nonce seed, nvram dict is NULL!\n", "");
-    return -1;
-  }
-  uint32_t seeds_size = 0;
-  uint8_t *nonce_seeds = NULL;
-  if(strcmp(gXPF.darwinVersion, "23.0.0") >= 0 && nonce_slot_format_cached == 1) {
-    nonce_seeds = get_nvram_entry_bytes(nvram_dict, kKRNC1BTPropertyKey,
-                                        OS_DATA, &seeds_size);
-  } else {
-    nonce_seeds = get_nvram_entry_bytes(nvram_dict, kNonceSeedsPropertyKey,
-                                        OS_DATA, &seeds_size);
-  }
-  if (!nonce_seeds) {
-    x8A4_log_error("Failed to get nonce-seeds!\n", "");
-  }
-  if(strcmp(gXPF.darwinVersion, "23.0.0") >= 0 && nonce_slot_format_cached == 1) {
-    struct x8A4_nonce_seeds_slot *slot = (struct x8A4_nonce_seeds_slot *)nonce_seeds;
+/* Removed mutation API x8A4_set_nonce_seeds_os_dict: read-only research build. */
 
-    memcpy(&slot->seed.seed, seed, 16);
-    int ret = set_nvram_entry_bytes(nvram_dict, kKRNC1BTPropertyKey, nonce_seeds, seeds_size, OS_DATA);
-    if (ret) {
-      x8A4_log_error("Failed to set nonce seed!\n", "");
-      return -1;
-    }
-  } else {
-    struct x8A4_nonce_seeds *seeds = (struct x8A4_nonce_seeds *)nonce_seeds;
-    memcpy(&seeds->seeds[domain_index].seed, seed, 16);
-    int ret = set_nvram_entry_bytes(nvram_dict, kNonceSeedsPropertyKey, nonce_seeds, seeds_size, OS_DATA);
-    if (ret) {
-      x8A4_log_error("Failed to set nonce seed!\n", "");
-      return -1;
-    }
-  }
-  x8A4_sync_nvram();
-  return 0;
-}
 
 /**
  * @brief           Get boot-nonce registry variant
@@ -986,30 +948,8 @@ uint8_t *x8A4_get_boot_nonce_registry(uint32_t *generator_size) {
  * @param[out]      generator
  * @return          Zero on success
  */
-int x8A4_set_boot_nonce_registry(uint8_t *generator) {
-  int ret = set_nvram_entry(get_dtre_options(), kBootNoncePropertyKey,
-                            (const char *)generator);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set nvram entry(%s)!\n", kBootNoncePropertyKey);
-    return -1;
-  }
-  ret = set_nvram_entry(get_dtre_options(), kIONVRAMSyncNowPropertyKey,
-                        kBootNoncePropertyKey);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set nvram entry(%s)!\n", kIONVRAMSyncNowPropertyKey);
-    return -1;
-  }
-  ret = set_nvram_entry(get_dtre_options(), kIONVRAMForceSyncNowPropertyKey,
-                        kBootNoncePropertyKey);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set nvram entry(%s)!\n", kIONVRAMForceSyncNowPropertyKey);
-    return -1;
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_set_boot_nonce_registry: read-only research build. */
+
 
 /**
  * @brief           Get apnonce generator
@@ -1089,17 +1029,20 @@ uint8_t *x8A4_get_apnonce(uint32_t *apnonce_size) {
     x8A4_log_error("Failed to get IOAESAccelerator keys! (%d:0x%016llX)\n", keys_count, keys);
     return NULL;
   }
-  uint32_t chosen_key = 0x8A3;
-  uint32_t struct_size = sizeof(struct x8A4_accel_key);
-  for (int i = 0; i < keys_count; i++) {
-    struct x8A4_accel_key *cur_key = keys + (struct_size * i);
-    if (cur_key->key_id == chosen_key) {
-      keys = cur_key;
+  struct x8A4_accel_key *selected = NULL;
+  for (uint32_t i = 0; i < keys_count; ++i) {
+    if (keys[i].key_id == 0x8A3 && keys[i].generated == 1 &&
+        (keys[i].key_sz == 16 || keys[i].key_sz == 128)) {
+      selected = &keys[i];
       break;
     }
   }
-  uint32_t *entangle_key_key = &keys->key[0];
-  uint32_t *entangle_key_iv = &keys->iv[0];
+  if (!selected) {
+    x8A4_log_error("A valid 0x8A3 key was not found.\n", "");
+    return NULL;
+  }
+  uint32_t *entangle_key_key = &selected->key[0];
+  uint32_t *entangle_key_iv = &selected->iv[0];
   uint64_t gen_encrypt[] = { 0, generator_data};
   x8A4_log_debug("generator_data: 0x%016llX\n", generator_data);
   size_t encrypted_size = 0;
@@ -1123,81 +1066,15 @@ uint8_t *x8A4_get_apnonce(uint32_t *apnonce_size) {
  * @param[out]      generator_size
  * @return          Pointer to apnonce generator(uint8_t array)
  */
-uint8_t *x8A4_set_apnonce_generator(uint8_t *generator, uint32_t *generator_size) {
-  if (!generator || (strlen((char *)generator) < 16 || strlen((char *)generator) > 18)) {
-    x8A4_log_error("Failed to set apnonce generator, generator is invalid! (0x%016llX:%s)\n", generator, generator ? (char *)generator : "NULL");
-    return NULL;
-  }
-  if (!generator_size) {
-    x8A4_log_error("Failed to set apnonce generator, out generator size pointer is NULL!\n", "");
-    return NULL;
-  }
-  char generator_str[19];
-  generator_str[0] = '0';
-  generator_str[1] = 'x';
-  if(strlen((char *)generator) == 16 && (generator[0] != '0' && generator[1] != 'x')) {
-    strncpy(generator_str + 2, (char *)generator, 16);
-  } else if(strlen((char *)generator) == 18 && (generator[0] == '0' && generator[1] == 'x')) {
-    strncpy(generator_str, (char *)generator, 18);
-  } else {
-    x8A4_log_error("Failed to set apnonce generator, generator is invalid! (0x%016llX:%s)\n", generator, generator ? (char *)generator : "NULL");
-    return NULL;
-  }
-  uint8_t *generator2 = (uint8_t *)generator_str;
-  if (io_clear_apnonce()) {
-x8A4_log_error("Failed to clear current apnonce generator!\n", "");
-    return NULL;
-  }
-  if (io_generate_apnonce()) {
-x8A4_log_error("Failed to generate new apnonce generator!\n", "");
-    return NULL;
-  }
-  uint32_t tmp_generator_size = *generator_size;
-  int ret = x8A4_set_boot_nonce_registry(generator2);
-  if(ret) {
-    if(verbose_cached)
-      x8A4_log_error("Failed to set apnonce generator in registry, retrying with os-dict!\n", "");
-    ret = x8A4_set_boot_nonce_os_dict(generator2, strlen((const char *)generator2) + 1);
-    if(ret) {
-      x8A4_log_error("Failed to set apnonce generator in os-dict!\n", "");
-      *generator_size = 0;
-      return NULL;
-    }
-  }
-  ret = x8A4_sync_nvram();
-  if(ret) {
-x8A4_log_error("Failed to set sync nvram!\n", "");
-    *generator_size = 0;
-    return NULL;
-  }
-  generator2 = x8A4_get_boot_nonce_registry(generator_size);
-  if (!generator2 || !*generator_size) {
-    generator2 = x8A4_get_boot_nonce_os_dict(generator_size);
-    if (!generator2 || !*generator_size) {
-      x8A4_log_error("Failed to set apnonce generator!\n", "");
-      *generator_size = 0;
-      return NULL;
-    }
-  }
-  *generator_size = tmp_generator_size;
-  return generator;
-}
+/* Removed mutation API x8A4_set_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           Clears the apnonce generator
  * @return          Zero on success
  */
-int x8A4_clear_apnonce_generator(void) {
-  if (io_clear_apnonce()) {
-    x8A4_log_error("Failed to clear current apnonce generator!\n", "");
-    return -1;
-  }
-  if(x8A4_sync_nvram()) {
-    x8A4_log_error("Failed to set sync nvram!\n", "");
-    return -2;
-  }
-  return 0;
-}
+/* Removed mutation API x8A4_clear_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           Get IOAESAccelerator Keys
@@ -1205,45 +1082,61 @@ int x8A4_clear_apnonce_generator(void) {
  * @return          Pointer to keys(x8A4_accel_key array)
  */
 struct x8A4_accel_key *x8A4_get_ioaesaccelkeys(uint32_t *keys_count) {
-  if(!keys_count) {
-    x8A4_log_error("Failed to get IOAESAccelerator keys, no keys count output pointer set!\n",
-                   "");
+  if (!keys_count) return NULL;
+  *keys_count = 0;
+#if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ) || \
+    !defined(X8A4_ENABLE_LEGACY_TABLE_READ) || !(X8A4_ENABLE_LEGACY_TABLE_READ)
+  x8A4_log_error("STOP: legacy whole-table key reads are disabled in this research build.\n", "");
+  return NULL;
+#else
+  if (!init_done || !koffsets_cached || !x8A4_target_runtime_matches()) {
+    x8A4_log_error("STOP: initialize on the exact approved target before key reads.\n", "");
     return NULL;
   }
-  uint64_t kobject = get_ipc_kobject(get_io_aes_accel_service());
+  const uint64_t kobject = get_ipc_kobject(get_io_aes_accel_service());
   if (!kobject) {
-    x8A4_log_error("Failed to get kobject from IOAESAccelerator service!\n",
-                   "");
+    x8A4_log_error("IOAESAccelerator service unavailable.\n", "");
     return NULL;
   }
-  uint64_t keys = 0;
-  x8A4_log_debug("kobject: 0x%016llX\n", kobject);
-  x8A4_log_debug("kobject + koffsets_cached->io_aes_accel_special_keys: 0x%016llX\n", kobject + koffsets_cached->io_aes_accel_special_keys);
-  if (kread(kobject + koffsets_cached->io_aes_accel_special_keys, &keys, 8) ||
-      keys == 0) {
-    x8A4_log_error("Failed to read io_aes_accel_special_keys from kobject: 0x%llX!\n", kobject);
+
+  uint64_t kernel_keys = 0;
+  uint32_t count = 0;
+  uint64_t key_ptr_address = 0, count_address = 0;
+  if (!x8A4_kernel_read_span(kobject,
+                             koffsets_cached->io_aes_accel_special_keys,
+                             sizeof(kernel_keys), &key_ptr_address) ||
+      !x8A4_kernel_read_span(kobject,
+                             koffsets_cached->io_aes_accel_special_keys_size,
+                             sizeof(count), &count_address) ||
+      kread(key_ptr_address, &kernel_keys, sizeof(kernel_keys)) ||
+      !kernel_keys ||
+      kread(count_address, &count, sizeof(count)) ||
+      !x8A4_accel_count_valid(count)) {
+    x8A4_log_error("IOAESAccelerator key table invalid or unavailable.\n", "");
     return NULL;
   }
-  x8A4_log_debug("kobject + koffsets_cached->io_aes_accel_special_keys_size: 0x%016llX\n", kobject + koffsets_cached->io_aes_accel_special_keys_size);
-  if (kread(kobject + koffsets_cached->io_aes_accel_special_keys_size,
-            keys_count, 4) ||
-      *keys_count == 0) {
-    x8A4_log_error("Failed to read io_aes_accel_special_keys_size from kobject: 0x%llX!\n", kobject);
+
+  struct x8A4_accel_key *out_keys = calloc(count, sizeof(*out_keys));
+  if (!out_keys) return NULL;
+
+  if (x8A4_read_accel_records(kernel_keys, out_keys, count,
+                              sizeof(*out_keys), x8A4_key_table_kread) != 0) {
+    memset(out_keys, 0, (size_t)count * sizeof(*out_keys));
+    x8A4_log_error("Key table read failed; discarding buffer.\n", "");
+    free(out_keys);
     return NULL;
   }
-  size_t struct_size = sizeof(struct x8A4_accel_key);
-  struct x8A4_accel_key *out_keys = (struct x8A4_accel_key *)calloc(*keys_count, struct_size);
+
+  /* The legacy cleanup table holds 128 pointers. Fail closed on overflow. */
+  if (!gc_cached || gc_count_cached < 0 || gc_count_cached >= 128) {
+    memset(out_keys, 0, (size_t)count * sizeof(*out_keys));
+    free(out_keys);
+    return NULL;
+  }
   gc_cached[gc_count_cached++] = (uint64_t)out_keys;
-  x8A4_log_debug_error("gc_cached[gc_count_cached++]: %d val: 0x%016llX\n", __LINE__, out_keys);
-  x8A4_log_debug("keys: 0x%016llX keys count: %zu\n", keys, *keys_count);
-  for (int i = 0; i < *keys_count; i++) {
-    struct x8A4_accel_key *cur_key = (struct x8A4_accel_key *)(out_keys + (struct_size * i));
-    if(kread((keys + (struct_size * i)), cur_key, struct_size)) {
-      x8A4_log_debug_error("Failed to read special key: %d from keys: 0x%016llX!\n", i, (keys + (struct_size * i)));
-      continue;
-    }
-  }
+  *keys_count = count;
   return out_keys;
+#endif
 }
 
 /**
@@ -1490,66 +1383,164 @@ void x8A4_cli_get_apnonce(void) {
  * @brief           CLI set apnonce generator
  * @param[in]       new_generator
  */
-void x8A4_cli_set_apnonce_generator(const char *new_generator) {
-  uint32_t new_generator_size = strlen(new_generator);
-  uint32_t out_generator_size = new_generator_size;
-  if(new_generator_size >= 16) {
-    x8A4_log("Setting apnonce generator(%s)...\n", new_generator);
-    uint8_t *generator = x8A4_set_apnonce_generator((uint8_t *)new_generator, &out_generator_size);
-    if(generator && new_generator_size == out_generator_size && memcmp(new_generator, generator, new_generator_size) == 0) {
-      x8A4_log("Done!\n", "");
-      x8A4_log("Successfully set apnonce generator(%s)!\n", generator);
-    } else {
-      x8A4_log_error("Failed to set apnonce generator(%s), set(%s)!\n", new_generator, (generator) ? (const char *)generator : "NULL");
-    }
-  }
-}
+/* Removed mutation API x8A4_cli_set_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           CLI clear apnonce generator
  */
-void x8A4_cli_clear_apnonce_generator(void) {
-  x8A4_log("Clearing apnonce generator...\n", "");
-  int ret = x8A4_clear_apnonce_generator();
-  if(!ret) {
-    x8A4_log("Done!\n", "");
-    x8A4_log("Successfully cleared apnonce generator!\n", "");
-  } else {
-    x8A4_log_error("Failed to clear apnonce generator!\n", "");
-  }
-}
+/* Removed mutation API x8A4_cli_clear_apnonce_generator: read-only research build. */
+
 
 /**
  * @brief           CLI get IOAESAccelerator keys
  * @param[in]       chosen_key
  */
-void x8A4_cli_get_accel_keys(uint32_t chosen_key) {
-  x8A4_log("Getting IOAESAccelerator keys...\n", "");
-  uint32_t keys_count = 0;
-  size_t struct_size = sizeof(struct x8A4_accel_key);
-  struct x8A4_accel_key *keys = x8A4_get_ioaesaccelkeys(&keys_count);
-  if(!keys) {
-    x8A4_log_error("Failed to get IOAESAccelerator Keys!\n", "");
-    return;
+/*
+ * Deliberately scan just the requested key. No whole-table allocation, no
+ * cleanup table ownership changes and no kernel writes.
+ */
+_Static_assert(sizeof(struct x8A4_accel_key) ==
+               sizeof(struct x8A4_target_key_record),
+               "Expected accelerator key layout changed");
+
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+static int x8A4_target_kread(uint64_t address, void *out, size_t size,
+                            void *unused) {
+  (void)unused;
+  return kread(address, out, size);
+}
+
+static int x8A4_get_target_key_table(uint64_t *kernel_keys, uint32_t *count) {
+  if (!kernel_keys || !count || !koffsets_cached ||
+      !koffsets_cached->io_aes_accel_special_keys ||
+      !koffsets_cached->io_aes_accel_special_keys_size)
+    return -1;
+
+  uint64_t kobj = get_ipc_kobject(get_io_aes_accel_service());
+  if (!kobj) return -1;
+
+  uint64_t key_ptr_address = 0, count_address = 0;
+  if (!x8A4_kernel_read_span(kobj,
+                            koffsets_cached->io_aes_accel_special_keys,
+                            sizeof(*kernel_keys), &key_ptr_address) ||
+      !x8A4_kernel_read_span(kobj,
+                            koffsets_cached->io_aes_accel_special_keys_size,
+                            sizeof(*count), &count_address) ||
+      kread(key_ptr_address, kernel_keys, sizeof(*kernel_keys)) ||
+      !unsign_ptr(kernel_keys) ||
+      kread(count_address, count, sizeof(*count)) ||
+      !x8A4_accel_count_valid(*count))
+    return -1;
+  return 0;
+}
+#endif
+
+#if defined(X8A4_ENABLE_LIVE_KEY_READ) && X8A4_ENABLE_LIVE_KEY_READ
+static const char *x8A4_scan_failure_text(int status) {
+  switch (status) {
+    case -1: return "incomplete: requested ID not found";
+    case -2: return "incomplete: scanner rejected input";
+    case -3: return "incomplete: record address out of bounds";
+    case -4: return "incomplete: kernel read failed";
+    case -5: return "incomplete: record metadata rejected";
+    default: return "incomplete: unknown scan failure";
   }
-  x8A4_log("Done!\n", "");
-  for (int i = 0; i < keys_count; i++) {
-    struct x8A4_accel_key *cur_key = keys + (struct_size * i);
-    if(chosen_key && cur_key->key_id != chosen_key) {
+}
+#endif
+
+int x8A4_cli_export_target_records(const char *output_dir) {
+#if !defined(X8A4_ENABLE_LIVE_KEY_READ) || !(X8A4_ENABLE_LIVE_KEY_READ)
+  (void)output_dir;
+  x8A4_log_error("STOP: live kernel key reading disabled in this safety build.\n", "");
+  return 78;
+#else
+  if (!output_dir || !init_done || !koffsets_cached ||
+      !x8A4_target_runtime_matches()) {
+    x8A4_log_error("STOP: exact target initialization and output path required.\n", "");
+    return 1;
+  }
+
+  int dirfd = x8A4_archive_create_private_dir(output_dir);
+  if (dirfd < 0) {
+    x8A4_log_error("STOP: could not create a new private output directory.\n", "");
+    return 1;
+  }
+
+  uint64_t kernel_keys = 0;
+  uint32_t count = 0;
+  if (x8A4_get_target_key_table(&kernel_keys, &count) != 0) {
+    (void)x8A4_archive_write_status(dirfd, 0x8A3,
+                                    "incomplete: key table lookup failed");
+    (void)x8A4_archive_write_status(dirfd, 0x8A4,
+                                    "incomplete: key table lookup failed");
+    (void)close(dirfd);
+    x8A4_log_error("STOP: IOAESAccelerator table lookup failed; no records saved.\n", "");
+    return 1;
+  }
+
+  static const uint32_t key_ids[2] = {0x8A3, 0x8A4};
+  unsigned raw_saved = 0, complete = 0;
+  int stop_after_current = 0;
+  for (unsigned n = 0; n < 2; ++n) {
+    const uint32_t key_id = key_ids[n];
+    if (stop_after_current) {
+      if (x8A4_archive_write_status(dirfd, key_id,
+                                    "not attempted: previous read or archive error") != 0)
+        x8A4_log_error("Could not write incomplete status for 0x%03X.\n", key_id);
       continue;
     }
-    x8A4_log("Got key (0x%04X)\n", cur_key->key_id);
-    x8A4_log("Key(0x%04X) Index: 0x%04X\n", cur_key->key_id, i);
-    x8A4_log("Key(0x%04X) Generated: 0x%04X\n", cur_key->key_id, cur_key->generated);
-    x8A4_log("Key(0x%04X) Size: 0x%04X\n", cur_key->key_id, cur_key->key_sz);
-    x8A4_log("Key(0x%04X) KEY: 0x%08X%08X%08X%08X%\n", cur_key->key_id, __builtin_bswap32(cur_key->key[0]), __builtin_bswap32(cur_key->key[1]), __builtin_bswap32(cur_key->key[2]), __builtin_bswap32(cur_key->key[3]));
-    x8A4_log("Key(0x%04X) IV: 0x%08X%08X%08X%08X%\n", cur_key->key_id, __builtin_bswap32(cur_key->iv[0]), __builtin_bswap32(cur_key->iv[1]), __builtin_bswap32(cur_key->iv[2]), __builtin_bswap32(cur_key->iv[3]));
-    if(chosen_key && cur_key->key_id == chosen_key) {
-      break;
+
+    struct x8A4_target_key_record record = {0};
+    uint32_t index = UINT32_MAX;
+    int scan_status = x8A4_scan_target_key(
+        kernel_keys, count, key_id, &record, &index, x8A4_target_kread, NULL);
+    if (scan_status != 0) {
+      const char *reason = x8A4_scan_failure_text(scan_status);
+      if (x8A4_archive_write_status(dirfd, key_id, reason) != 0) {
+        x8A4_log_error("Record 0x%03X scan failed; status could not be saved.\n",
+                       key_id);
+        stop_after_current = 1;
+      } else {
+        x8A4_log_error("Record 0x%03X incomplete (scan status %d).\n",
+                       key_id, scan_status);
+      }
+      x8A4_secure_clear(&record, sizeof(record));
+      if (scan_status != -1) stop_after_current = 1;
+      continue;
+    }
+
+    int archive_status = x8A4_archive_write_record(dirfd, &record, index);
+    x8A4_secure_clear(&record, sizeof(record));
+    if (archive_status == 0) {
+      ++raw_saved;
+      if (x8A4_archive_write_status(dirfd, key_id, "saved") == 0) {
+        ++complete;
+        x8A4_log("Record 0x%03X saved privately (index %u).\n", key_id, index);
+      } else {
+        x8A4_log_error("Record 0x%03X bytes saved, status metadata failed.\n",
+                       key_id);
+        stop_after_current = 1;
+      }
+    } else if (archive_status == 1) {
+      ++raw_saved;
+      (void)x8A4_archive_write_status(
+          dirfd, key_id, "incomplete: raw saved; metadata write failed");
+      x8A4_log_error("Record 0x%03X raw bytes saved; metadata write failed.\n",
+                     key_id);
+      stop_after_current = 1;
+    } else {
+      (void)x8A4_archive_write_status(dirfd, key_id,
+                                      "incomplete: raw archive write failed");
+      x8A4_log_error("Record 0x%03X archive write failed.\n", key_id);
+      stop_after_current = 1;
     }
   }
-  gc_d_cached[gc_d_count_cached++] = (uint64_t)keys;
-  free(keys);
+
+  (void)close(dirfd);
+  if (raw_saved == 2 && complete == 2) return 0;
+  return raw_saved ? 2 : 1;
+#endif
 }
 
 /**
@@ -1591,48 +1582,5 @@ void x8A4_cli_get_nonce_seeds(void) {
  * @brief           CLI set cryptex seed
  * @param[in]       new_seed
  */
-void x8A4_cli_set_cryptex_seed(const char *new_seed) {
-  x8A4_log("Setting cryptex seed(%s)...\n", new_seed);
-  if(!new_seed) {
-    return;
-  }
-  if(strlen(new_seed) < 32) {
-    return;
-  }
-  char seed_str[35];
-  char seed_str2[35];
-  seed_str2[0] = '0';
-  seed_str2[1] = 'x';
-  if(strlen(new_seed) == 34 && (new_seed[0] == '0' && new_seed[1] == 'x')) {
-    strncpy(seed_str, new_seed, 18);
-    strncpy(seed_str2 + 2, new_seed + 18, 16);
-  } else if(strlen(new_seed) == 32 && (new_seed[0] != '0' && new_seed[1] != 'x')) {
-    strncpy(seed_str + 2, new_seed, 16);
-    strncpy(seed_str2 + 2, new_seed + 18, 16);
-  } else {
-    return;
-  }
-  uint64_t seed[2];
-  seed[0] = strtoull(seed_str, NULL, 0);
-  seed[1] = strtoull(seed_str2, NULL, 0);
-  if((!seed[0] || seed[0] == ~(uint64_t)0) || !seed[1] || seed[1] == ~(uint64_t)0) {
-    return;
-  }
-  seed[0] = __builtin_bswap64(seed[0]);
-  seed[1] = __builtin_bswap64(seed[1]);
-  int cryptex_boot_index = 0;
-  if(strcmp(gXPF.darwinVersion, "23.0.0") >= 0 && nonce_slot_format_cached == 1) {
-    cryptex_boot_index = x8A4_get_cryptex_boot_slot_slots_index();
-  } else {
-    cryptex_boot_index = x8A4_get_cryptex_boot_domain_index();
-  }
-  if(cryptex_boot_index == -1) {
-    return;
-  }
-  if(x8A4_set_nonce_seeds_os_dict((uint8_t *)seed, cryptex_boot_index)) {
-    x8A4_log_error("Failed to set cryptex seed(%s)!\n", new_seed);
-    return;
-  }
-  x8A4_log("Done!\n", "");
-  x8A4_log("Successfully set cryptex seed(%s)!\n", new_seed);
-}
+/* Removed mutation API x8A4_cli_set_cryptex_seed: read-only research build. */
+

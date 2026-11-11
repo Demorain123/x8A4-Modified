@@ -22,6 +22,10 @@
 struct kernel_offsets *koffsets_cached;
 
 /* Functions */
+/* xpf_item_resolve may return UINT64_MAX when a pattern is absent. */
+static bool valid_resolved_offset(uint64_t value) {
+  return value != 0 && value != UINT64_MAX;
+}
 /**
  * @brief          Init kernel offsets
  * @return         Zero on init success
@@ -126,8 +130,14 @@ int offsets_init(void) {
   if (ios_1640) {
   }
   if (ios_1700) {
+    /*
+     * Candidate offsets cross-checked against Dopamine 3.0.13 source only.
+     * They are not exact 21D61 binary/layout proof. The IPC accessors stay
+     * fail-closed until table bounds, PAC and SMR lifetime are established.
+     */
     koffsets_cached->ipc_port_kobject = 0x48;
-    koffsets_cached->ipc_port_kobject_is_iomachport = 0x1;
+    koffsets_cached->ipc_port_kobject_is_iomachport = 1;
+    koffsets_cached->iomachport_object = 0x30;
   }
   if (ios_1800) {
 
@@ -139,32 +149,33 @@ int offsets_init(void) {
   koffsets_cached->os_list[OS_STRING] = koffsets_cached->os_string;
   if (!koffsets_cached->t1sz_boot) {
     koffsets_cached->t1sz_boot = xpf_item_resolve("kernelConstant.T1SZ_BOOT");
-    if (!koffsets_cached->t1sz_boot) {
+    if (!valid_resolved_offset(koffsets_cached->t1sz_boot) ||
+        koffsets_cached->t1sz_boot > 62) {
       x8A4_log_error("Failed to find kernel T1SZ_BOOT!\n", "");
-      return 0;
+      return -1;
     }
   }
   if (!koffsets_cached->itk_space) {
     koffsets_cached->itk_space =
         xpf_item_resolve("kernelStruct.task.itk_space");
-    if (!koffsets_cached->itk_space) {
+    if (!valid_resolved_offset(koffsets_cached->itk_space)) {
       x8A4_log_error("Failed to find kernel task itk_space!\n", "");
-      return 0;
+      return -1;
     }
   }
   if (!koffsets_cached->proc_struct_size) {
     koffsets_cached->proc_struct_size =
         xpf_item_resolve("kernelStruct.proc.struct_size");
-    if (!koffsets_cached->proc_struct_size) {
+    if (!valid_resolved_offset(koffsets_cached->proc_struct_size)) {
       x8A4_log_error("Failed to find kernel proc_struct_size!\n", "");
-      return 0;
+      return -1;
     }
   }
   if (!koffsets_cached->all_proc) {
     koffsets_cached->all_proc = xpf_item_resolve("kernelSymbol.allproc");
-    if (!koffsets_cached->all_proc) {
+    if (!valid_resolved_offset(koffsets_cached->all_proc)) {
       x8A4_log_error("Failed to find kernel proc all_proc!\n", "");
-      return 0;
+      return -1;
     }
   }
   if(verbose_cached) {

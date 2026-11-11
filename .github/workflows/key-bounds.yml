@@ -1,0 +1,136 @@
+name: Key boundary safety checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  key-bounds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile standalone fixture with sanitizers
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/key_bounds_test.c -o /tmp/x8a4-key-bounds-test
+          /tmp/x8a4-key-bounds-test
+      - name: Mock targeted reads under ASan and UBSan
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/target_key_test.c -o /tmp/x8a4-target-key-test
+          /tmp/x8a4-target-key-test
+      - name: Exercise production key-record reader with mock kernel and sanitizers
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/key_table_reader_test.c -o /tmp/x8a4-key-reader-test
+          /tmp/x8a4-key-reader-test
+      - name: Validate IPC entry names, bounds, generation and type under sanitizers
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/ipc_entry_validation_test.c -o /tmp/x8a4-ipc-entry-test
+          ASAN_OPTIONS=detect_leaks=0 /tmp/x8a4-ipc-entry-test
+      - name: Test private raw-record archive under ASan and UBSan
+        run: |
+          cc -std=c17 -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -IInclude tests/private_record_archive_test.c -o /tmp/x8a4-private-record-archive-test
+          ASAN_OPTIONS=detect_leaks=0 /tmp/x8a4-private-record-archive-test
+      - name: Regression checks for target-only raw-record CLI and pointer path
+        run: python3 tests/source_regression.py
+
+  ios-arm64-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install iOS build tools
+        run: brew install cmake dpkg ldid-procursus
+      - name: Configure iOS ARM64 safety build (no live reads)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DRELEASE=ON \
+            -DX8A4_ENABLE_LIVE_KEY_READ=OFF
+      - name: Compile Mach-O ARM64 binary and library
+        run: cmake --build build --parallel 2
+      - name: Verify outputs and CLI imports
+        run: |
+          lipo build/x8A4_CLI -verify_arch arm64
+          lipo build/libx8A4Research.1.dylib -verify_arch arm64
+          if nm -arch arm64 -u build/x8A4_CLI | grep -E '_x8A4_cli_(set|clear)'; then
+            echo "STOP: mutating x8A4 CLI import detected"
+            exit 1
+          fi
+          # Scan the whole dylib, not only the restricted CLI.
+          if nm -arch arm64 -u build/libx8A4Research.1.dylib | grep -Ei '_(kwrite|physwrite|kcall|kmalloc|kdealloc|IORegistryEntrySetCFProperty|IOConnectCallStructMethod)($|[^[:alnum:]_])'; then
+            echo "STOP: mutating kernel/NVRAM API imported by library"
+            exit 1
+          fi
+          if nm -arch arm64 -g build/libx8A4Research.1.dylib | grep -E '_x8A4_(set_apnonce_generator|clear_apnonce_generator|sync_nvram|set_boot_nonce|set_nonce_seeds|cli_set_cryptex_seed)'; then
+            echo "STOP: mutating x8A4 API remains exported"
+            exit 1
+          fi
+          if ldid -e build/x8A4_CLI | grep -E 'AppleMobileApNonceUserClient|com.apple.security.iokit-user-client-class'; then
+            echo "STOP: AppleMobileApNonce entitlement remains"
+            exit 1
+          fi
+          # The command-line executable must bind to OUR unique research library.
+          otool -L build/x8A4_CLI
+          otool -L build/x8A4_CLI | grep -F 'libx8A4Research.1.dylib'
+          otool -l build/x8A4_CLI | grep -F '@loader_path'
+          if otool -L build/x8A4_CLI | grep -F 'libx8A4.1.dylib'; then
+            echo "STOP: CLI could load the existing installed libx8A4"
+            exit 1
+          fi
+          file build/x8A4_CLI build/libx8A4Research.1.dylib
+          echo "PASS: experimental ARM64 build; NOT an on-device safety approval"
+      - name: Build and audit opt-in ARM64 binaries (not packaged or uploaded)
+        run: |
+          # This build is NOT packaged, installed, run or uploaded anywhere.
+          cmake -S . -B build-live-syntax \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DRELEASE=ON \
+            -DX8A4_ENABLE_LIVE_KEY_READ=ON
+          cmake --build build-live-syntax --parallel 2
+          lipo build-live-syntax/x8A4_CLI -verify_arch arm64
+          lipo build-live-syntax/libx8A4Research.1.dylib -verify_arch arm64
+          if nm -arch arm64 -u build-live-syntax/x8A4_CLI | grep -E '_x8A4_(get_ioaesaccelkeys|get_apnonce|get_cryptex_nonce)'; then
+            echo "STOP: legacy whole-table or nonce API is imported by the target CLI"
+            exit 1
+          fi
+          if nm -arch arm64 -u build-live-syntax/libx8A4Research.1.dylib | grep -Ei '_(kwrite|physwrite|kcall|IORegistryEntrySetCFProperty|IOConnectCallStructMethod)($|[^[:alnum:]_])'; then
+            echo "STOP: kernel/NVRAM mutation import found in opt-in dylib"
+            exit 1
+          fi
+          for binary in build-live-syntax/x8A4_CLI build-live-syntax/libx8A4Research.1.dylib; do
+            if strings -a "$binary" | grep -E 'KEY: 0x|IV: 0x'; then
+              echo "STOP: key bytes could be printed by an opt-in binary"
+              exit 1
+            fi
+          done
+          otool -L build-live-syntax/x8A4_CLI | grep -F 'libx8A4Research.1.dylib'
+          otool -l build-live-syntax/x8A4_CLI | grep -F '@loader_path'
+          shasum -a 256 build-live-syntax/x8A4_CLI build-live-syntax/libx8A4Research.1.dylib
+          echo "PASS: opt-in ARM64 build/import audit; not a live-device approval"
+      - name: Prepare OFF-by-default research build for binary audit
+        run: |
+          mkdir -p safe-build
+          cp build/x8A4_CLI build/libx8A4Research.1.dylib safe-build/
+          # Keep device-specific status notes out of uploaded build artifacts.
+          (cd safe-build && shasum -a 256 x8A4_CLI libx8A4Research.1.dylib > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x8A4Research-arm64-DISABLED-${{ github.sha }}
+          path: safe-build/
+          if-no-files-found: error
+          retention-days: 7

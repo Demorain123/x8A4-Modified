@@ -2,11 +2,14 @@ cmake_minimum_required(VERSION 3.27)
 project(x8A4 C)
 
 set(CMAKE_C_STANDARD 17)
-string(COMPARE EQUAL "${CMAKE_OSX_ARCHITECTURES}" "" arch_not_set)
-if(NOT DEFINED CMAKE_OSX_ARCHITECTURES OR arch_not_set)
-    set(CMAKE_OSX_ARCHITECTURES arm64 arm64e)
+if(NOT CMAKE_OSX_ARCHITECTURES)
+    # libkrw on the target Dopamine device uses the arm64 userspace ABI.
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
 endif()
-set(CMAKE_OSX_DEPLOYMENT_TARGET "")
+if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+endif()
+option(X8A4_ENABLE_LIVE_KEY_READ "Enable EXPERIMENTAL on-device kernel key reads" OFF)
 
 find_program(LDID ldid2)
 if(NOT LDID)
@@ -37,7 +40,7 @@ else()
     set(VERSION_COMMIT_SHA "unknown")
 endif()
 
-add_library(x8A4 STATIC SHARED x8A4.c
+add_library(x8A4 SHARED x8A4.c
         Logger/logger.c
         Include/x8A4/Logger/logger.h
         Kernel/slide.c
@@ -74,6 +77,8 @@ set_target_properties(x8A4
 
 set(SOVERSION 1)
 set_target_properties(x8A4 PROPERTIES SOVERSION ${SOVERSION})
+# Isolate the research build from the already installed libx8A4.1.dylib.
+set_target_properties(x8A4 PROPERTIES OUTPUT_NAME "x8A4Research")
 
 
 target_link_directories(x8A4 PRIVATE
@@ -85,9 +90,14 @@ target_link_libraries(x8A4
         krw
         compression
         choma
-        XPF)
+        xpf)
 
 add_executable(x8A4_CLI x8A4_CLI.c)
+if(X8A4_ENABLE_LIVE_KEY_READ)
+    # Gate the shared library APIs as well as the command-line front end.
+    target_compile_definitions(x8A4 PRIVATE X8A4_ENABLE_LIVE_KEY_READ=1)
+    target_compile_definitions(x8A4_CLI PRIVATE X8A4_ENABLE_LIVE_KEY_READ=1)
+endif()
 
 add_definitions(
         -DVERSION_COMMIT_COUNT="${VERSION_COMMIT_COUNT}"
@@ -105,7 +115,7 @@ set(RPATH2 "/usr/lib")
 set_target_properties(x8A4_CLI
         PROPERTIES
 #        LINK_FLAGS "-Wl,-rpath,${RPATH} -Wl,-rpath,${RPATH2} -L/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/15.0.0/lib/darwin -lclang_rt.asan_abi_ios -lclang_rt.asan_ios_dynamic")
-        LINK_FLAGS "-Wl,-rpath,${RPATH} -Wl,-rpath,${RPATH2}")
+        LINK_FLAGS "-Wl,-rpath,@loader_path -Wl,-rpath,${RPATH} -Wl,-rpath,${RPATH2}")
 set_target_properties(x8A4_CLI
         PROPERTIES
 #        COMPILE_FLAGS "-Wall -Werror -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer")
@@ -119,7 +129,7 @@ target_link_libraries(x8A4_CLI
         "x8A4")
 
 add_custom_command(TARGET x8A4 POST_BUILD
-        COMMAND ${LDID} -S -Hsha256 -Cadhoc ${CMAKE_CURRENT_BINARY_DIR}/libx8A4.${SOVERSION}.dylib
+        COMMAND ${LDID} -S -Hsha256 -Cadhoc ${CMAKE_CURRENT_BINARY_DIR}/libx8A4Research.${SOVERSION}.dylib
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Signing libx8A4.${SOVERSION}.dylib..."
 )

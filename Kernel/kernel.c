@@ -16,6 +16,7 @@
 #include <libkrw.h>
 #include <sys/mount.h>
 #include <x8A4/Kernel/kernel.h>
+#include <x8A4/Kernel/ipc_entry_validation.h>
 #include <x8A4/Kernel/offsets.h>
 #include <x8A4/Kernel/slide.h>
 #include <x8A4/Services/services.h>
@@ -50,6 +51,10 @@ int tfp0_init(void) {
   uint32_t read_bytes = 0;
   uint64_t base = 0;
   int ret = kbase(&base);
+  if (ret != 0) {
+    x8A4_log_error("Kernel read provider kbase failed.\n", "");
+    return -1;
+  }
   x8A4_log_debug("kbase ret: %d kbase: 0x%016llX!\n", ret, base);
   if (!base) {
     base = gXPF.kernelBase + get_slide();
@@ -66,7 +71,9 @@ int tfp0_init(void) {
  * @return          Zero on XPF init success
  */
 int xpf_init(void) {
-  int ret = xpf_start_with_kernel_path(get_kernel_path());
+  const char *path = get_kernel_path();
+  if (!path) return -1;
+  int ret = xpf_start_with_kernel_path(path);
   const char *err = xpf_get_error();
   if(err) {
     x8A4_log_error("Can't proceed with kernel init, failed to start xpf with kernel: \"%s\" error: %s\n", get_kernel_path(), err);
@@ -84,48 +91,35 @@ int xpf_init(void) {
  * @return          Kernel path
  */
 const char *get_kernel_path(void) {
-  if (kernel_path_cached) {
-    return kernel_path_cached;
-  }
-  const char *preboot_path = "/private/preboot/";
-  if (access(preboot_path, F_OK) != 0) {
-    x8A4_log_error("Can't proceed with kernel init, %s not found!\n", preboot_path);
+  if (kernel_path_cached) return kernel_path_cached;
+  const uint8_t *hash = get_boot_manifest_hash_registry();
+  const uint32_t hash_len = get_boot_manifest_hash_len();
+  if (!hash || (hash_len != CC_SHA1_DIGEST_LENGTH &&
+                hash_len != CC_SHA384_DIGEST_LENGTH)) {
+    x8A4_log_error("Unsupported or unavailable boot manifest hash.\n", "");
     return NULL;
   }
-  const uint32_t *boot_manifest_hash = (const uint32_t *)get_boot_manifest_hash_registry();
-  if(!boot_manifest_hash) {
-    x8A4_log_error("Can't proceed with kernel init, failed to get boot manifest hash!\n", "");
+  char hex[2 * CC_SHA384_DIGEST_LENGTH + 1];
+  static const char digits[] = "0123456789ABCDEF";
+  for (uint32_t i = 0; i < hash_len; i++) {
+    hex[2*i] = digits[hash[i] >> 4];
+    hex[2*i + 1] = digits[hash[i] & 15];
+  }
+  hex[2*hash_len] = '\0';
+  const char *fmt = "/private/preboot/%s/System/Library/Caches/"
+                    "com.apple.kernelcaches/kernelcache";
+  char *path = calloc(1, 256);
+  if (!path) return NULL;
+  int n = snprintf(path, 256, fmt, hex);
+  if (n < 0 || n >= 256 || access(path, R_OK) != 0) {
+    x8A4_log_error("Preboot kernelcache path missing or inaccessible.\n", "");
+    free(path);
     return NULL;
   }
-  char boot_manifest_hash_str[104];
-  uint32_t *boot_manifest_hash_str_ptr = (uint32_t *)boot_manifest_hash_str;
-  int cnt = 0;
-  int sz = 0;
-  int end = 0;
-  int hash_len = get_hash_len();
-  if(hash_len == CC_SHA1_DIGEST_LENGTH) {
-    cnt = 10;
-    sz = 20;
-    end = 40;
-  } else if(hash_len == CC_SHA384_DIGEST_LENGTH) {
-    cnt = 10;
-    sz = 32;
-    end = 96;
-  }
-  int j = 0;
-  for(int i = 0; i < cnt; i++) {
-    snprintf((void *)&boot_manifest_hash_str_ptr[j], sz, "%08X%08X%08X%08X\n", __builtin_bswap32(boot_manifest_hash[i + 0]), __builtin_bswap32(boot_manifest_hash[i + 1]), __builtin_bswap32(boot_manifest_hash[i + 2]), __builtin_bswap32(boot_manifest_hash[i + 3]));
-    j+=2;
-  }
-  boot_manifest_hash_str[end] = '\0';
-
-  const char *format = "/private/preboot/%s/System/Library/Caches/"
-                       "com.apple.kernelcaches/kernelcache";
-  char *kernel_path = (char *)calloc(1, 256);
-  snprintf(kernel_path, 256, format, boot_manifest_hash_str);
-  kernel_path_cached = kernel_path;
-  return (const char *)kernel_path;
+  kernel_path_cached = path;
+  return path;
 }
+
 #if 0
 /**
  * @brief           Reads mntinfo firmware entry to find preboot kernel path
@@ -218,19 +212,21 @@ const char *get_kernel_path_legacy(void) {
 #endif
 
 /**
- * @brief           Kernel kread wrapper for reading from SMR pointers
- * @param[in]       addr
- * @param[out]      value
- * @param[in]       sz
- * @return          Zero on success
+ * @brief           Read and normalize an encoded kernel SMR pointer.
+ * @discussion      This transforms pointer bits only. It does not acquire an
+ *                  SMR read-side protection or stabilize the pointed object.
  */
 int kread_smr(uint64_t addr, uint64_t *value, size_t sz) {
+  if (!value || sz != sizeof(*value) || !koffsets_cached ||
+      !koffsets_cached->t1sz_boot || koffsets_cached->t1sz_boot > 62 ||
+      !koffsets_cached->smr || koffsets_cached->smr > 3)
+    return -1;
   int ret = kread(addr, value, sz);
-  if (ret || !value) {
+  if (ret) {
     x8A4_log_error("Failed to read kernel smr pointer 0x%llX 0x%zX(%d)\n", addr, sz, ret);
     return -1;
   }
-  unsign_ptr(value);
+  if (!unsign_ptr(value)) return -1;
   uint64_t bits = (koffsets_cached->smr << (62 - koffsets_cached->t1sz_boot));
   uint64_t case1 = 0xFFFFFFFFFFFFC000 & ~bits;
   uint64_t case2 = 0xFFFFFFFFFFFFFFE0 & ~bits;
@@ -245,15 +241,16 @@ int kread_smr(uint64_t addr, uint64_t *value, size_t sz) {
 }
 
 /**
- * @brief           Unsign a PAC signed pointer addr with t1sz
- * @param[in]       addr
- * @return          Unsigned addr
+ * @brief           Set kernel-address high bits using the XPF T1SZ value.
+ * @discussion      This is address normalization, not PAC authentication. It
+ *                  does not validate a pointer or stabilize object lifetime.
  */
 uint64_t unsign_ptr(uint64_t *addr) {
   if (!addr) {
     return 0;
   }
-  if (!*addr) {
+  if (!*addr || !koffsets_cached || !koffsets_cached->t1sz_boot ||
+      koffsets_cached->t1sz_boot > 62) {
     return 0;
   }
   *addr |= ~((1ULL << (64U - koffsets_cached->t1sz_boot)) - 1U);
@@ -268,15 +265,18 @@ uint64_t get_our_proc(void) {
   if (our_proc_cached) {
     return our_proc_cached;
   }
-  pid_t our_pid = getpid();
+  const pid_t our_pid = getpid();
   pid_t pid = 0;
   uint64_t proc = koffsets_cached->all_proc + get_slide();
   bool found = false;
-  while (!kread(proc + koffsets_cached->proc_list_next, (void *)&proc, 8)) {
-    int ret = kread(proc + koffsets_cached->proc_pid, (void *)&pid, 4);
-    if (ret) {
-      continue;
-    }
+  /* Reject cyclic/broken lists instead of looping indefinitely. */
+  for (uint32_t inspected = 0; inspected < 262144 && proc; ++inspected) {
+    uint64_t next = 0;
+    if (kread(proc + koffsets_cached->proc_list_next, &next, sizeof(next)))
+      break;
+    if (!unsign_ptr(&next) || next == proc) break;
+    proc = next;
+    if (kread(proc + koffsets_cached->proc_pid, &pid, sizeof(pid))) break;
     if (pid == our_pid) {
       found = true;
       break;
@@ -321,44 +321,27 @@ uint64_t get_our_task(void) {
  * @return          Address of an ipc_port in kernel space
  */
 uint64_t get_ipc_port(mach_port_name_t port_name) {
-  if (MACH_PORT_VALID(port_name) == 0) {
-    x8A4_log_error("Port 0x%X is invalid!\n", port_name);
+  uint32_t index = 0;
+  const enum x8a4_ipc_validation_status name_status =
+      x8a4_ipc_port_name_index((uint32_t)port_name, &index);
+  if (name_status != X8A4_IPC_VALID) {
+    x8A4_log_error("Refusing invalid Mach port name 0x%08X (status=%d).\n",
+                   (uint32_t)port_name, name_status);
     return 0;
   }
-  uint64_t task = get_our_task();
-  if (task == 0) {
-    x8A4_log_error("Task is NULL!\n", "");
-    return 0;
-  }
-  uint64_t itk_space = 0;
-  int ret = kread(task + koffsets_cached->itk_space, &itk_space, 8);
-  if (ret || !itk_space) {
-    x8A4_log_error("Failed to read kernel task itk_space! (%d:0x%016llX)\n", ret, itk_space);
-    return 0;
-  }
-  unsign_ptr(&itk_space);
-  uint64_t table = 0;
-  if (koffsets_cached->table_smr) {
-    ret =
-        kread_smr(itk_space + koffsets_cached->task_itk_space_table, &table, 8);
-  } else {
-    ret = kread(itk_space + koffsets_cached->task_itk_space_table, &table, 8);
-  }
-  if (ret || !table) {
-    x8A4_log_error("Failed to read kernel task itk_space table! (%d:0x%016llX)\n", ret, table);
-    return 0;
-  }
-  uint64_t port = 0;
-  unsign_ptr(&table);
-  ret = kread(
-      table + (MACH_PORT_INDEX(port_name) * koffsets_cached->ipc_entry_size) +
-          koffsets_cached->ipc_entry_object,
-      &port, 8);
-  if (ret || !port) {
-    x8A4_log_error("Failed to read port from kernel ipc_entry object! (%d:0x%016llX)\\n", ret, port);
-    return 0;
-  }
-  return port;
+  (void)index;
+
+  /*
+   * Fail closed before any IPC-space/table read. For 21D61, this source tree
+   * has no target-verified KALLOC_ARRAY capacity decoder, exact entry-layout
+   * proof, or way to hold ipc_space's read lock / SMR lifetime while reading.
+   * Bounds and generation/type checks alone would not make that read safe.
+   */
+  x8A4_log_error(
+      "Refusing IPC entry lookup: 21D61 table capacity/layout and SMR-safe "
+      "entry lifetime are not verified. No IPC table memory was read.\n",
+      "");
+  return 0;
 }
 
 /**
@@ -367,21 +350,12 @@ uint64_t get_ipc_port(mach_port_name_t port_name) {
  * @return          Address of kobject in kernel space
  */
 uint64_t get_ipc_kobject_from_iomachport(uint64_t port_addr) {
-  if (!koffsets_cached->ipc_port_kobject_is_iomachport) {
-    x8A4_log_error("Ipc_kobject is not wrapped by IOMachPort on this version!\n", "");
-    return 0;
-  }
-  if (port_addr == 0) {
-    x8A4_log_error("IOMachPort port address is zero!\n", "");
-    return 0;
-  }
-  uint64_t kobject = 0;
-  int ret = kread(port_addr + koffsets_cached->iomachport_object, &kobject, 8);
-  if (ret || !kobject) {
-    x8A4_log_error("Failed to read kobject from IOMachPort address! (%d:0x%016llX)\n", ret, kobject);
-    return 0;
-  }
-  return kobject;
+  (void)port_addr;
+  x8A4_log_error(
+      "Refusing IOMachPort.object read: target field layout and pointer "
+      "authentication/lifetime are not verified.\n",
+      "");
+  return 0;
 }
 
 /**
@@ -390,22 +364,12 @@ uint64_t get_ipc_kobject_from_iomachport(uint64_t port_addr) {
  * @return          Address of kobject in kernel space
  */
 uint64_t get_ipc_kobject(io_service_t service) {
-  uint64_t port = get_ipc_port(service);
-  if (port == 0) {
-    x8A4_log_error("Ipc port address is zero!\n", "");
-    return 0;
-  }
-  uint64_t kobject = 0;
-  int ret = kread(port + koffsets_cached->ipc_port_kobject, &kobject, 8);
-  if (ret || !kobject) {
-    x8A4_log_error("Failed to read kobject from ipc port! (%d:0x%016llX)\n", ret, kobject);
-    return 0;
-  }
-  if (koffsets_cached->ipc_port_kobject_is_iomachport) {
-    kobject = get_ipc_kobject_from_iomachport(kobject);
-  }
-  unsign_ptr(&kobject);
-  return kobject;
+  (void)service;
+  x8A4_log_error(
+      "Refusing ipc_port.kobject read: the 21D61 target field layout and "
+      "PAC/lifetime handling are not verified.\n",
+      "");
+  return 0;
 }
 
 #if 0
@@ -525,64 +489,12 @@ int kernel_test(void) {
  * @brief           Generates a new apnonce and generator via AppleMobileApNonce UserClient
  * @return          Zero on success
  */
-int io_generate_apnonce(void) {
-  io_service_t apnonce_service = get_apple_mobile_ap_nonce_service();
-  if (MACH_PORT_VALID(apnonce_service) == 0) {
-    x8A4_log_error("Port 0x%X for apnonce service is invalid!\n", apnonce_service);
-    return -1;
-  }
-  uint8_t nonce[CC_SHA384_DIGEST_LENGTH];
-  size_t nonce_size = CC_SHA384_DIGEST_LENGTH;
-  kern_return_t ret = IOConnectCallStructMethod(
-      apnonce_service, APPLE_MOBILE_AP_NONCE_GENERATE_NONCE_SEL, NULL, 0, nonce,
-      &nonce_size);
-  if (ret != KERN_SUCCESS) {
-    x8A4_log_error("!IOConnectCallStructMethod APPLE_MOBILE_AP_NONCE_GENERATE_NONCE_SEL 0x%08X(%s)", ret, mach_error_string(ret));
-    return -1;
-  }
-  if (options_cached) {
-    IOObjectRelease(options_cached);
-    options_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service2_cached) {
-    IOServiceClose(apple_mobile_ap_nonce_service2_cached);
-    apple_mobile_ap_nonce_service2_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service_cached) {
-    IOObjectRelease(apple_mobile_ap_nonce_service_cached);
-    apple_mobile_ap_nonce_service_cached = IO_OBJECT_NULL;
-  }
-  return 0;
-}
+/* Removed mutation API io_generate_apnonce: read-only research build. */
+
 
 /**
  * @brief           Clears the apnonce and generator via AppleMobileApNonce UserClient
  * @return          Zero on success
  */
-int io_clear_apnonce(void) {
-  io_service_t apnonce_service = get_apple_mobile_ap_nonce_service();
-  if (MACH_PORT_VALID(apnonce_service) == 0) {
-    x8A4_log_error("Port 0x%08X for apnonce service is invalid!\n", apnonce_service);
-    return -1;
-  }
-  kern_return_t ret = IOConnectCallStructMethod(
-      apnonce_service, APPLE_MOBILE_AP_NONCE_CLEAR_NONCE_SEL, NULL, 0, NULL,
-      NULL);
-  if (ret != KERN_SUCCESS) {
-    x8A4_log_error("Failed IOConnectCallStructMethod APPLE_MOBILE_AP_NONCE_CLEAR_NONCE_SEL! (0x%08:X%s)", ret, mach_error_string(ret));
-    return -1;
-  }
-  if (options_cached) {
-    IOObjectRelease(options_cached);
-    options_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service2_cached) {
-    IOServiceClose(apple_mobile_ap_nonce_service2_cached);
-    apple_mobile_ap_nonce_service2_cached = IO_OBJECT_NULL;
-  }
-  if (apple_mobile_ap_nonce_service_cached) {
-    IOObjectRelease(apple_mobile_ap_nonce_service_cached);
-    apple_mobile_ap_nonce_service_cached = IO_OBJECT_NULL;
-  }
-  return 0;
-}
+/* Removed mutation API io_clear_apnonce: read-only research build. */
+

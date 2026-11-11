@@ -32,7 +32,6 @@ typedef uint32_t IOOptionBits;
 /* External prototypes */
 io_registry_entry_t IORegistryEntryFromPath(mach_port_t, const io_string_t);
 extern CFTypeRef IORegistryEntryCreateCFProperty(io_registry_entry_t, CFStringRef, CFAllocatorRef, IOOptionBits);
-extern kern_return_t IORegistryEntrySetCFProperty(io_registry_entry_t, CFStringRef, CFTypeRef);
 extern kern_return_t IOObjectRelease(io_object_t kobject);
 
 /* Defines */
@@ -58,7 +57,6 @@ const uint8_t *get_boot_manifest_hash_registry(void);
 const uint8_t *get_nonce_seeds_registry(void);
 const uint8_t *get_boot_nonce_registry(void);
 uint32_t get_hash_len(void);
-int set_nvram_entry(io_registry_entry_t nvram_entry, const char *key, const char *value);
 
 /* Cached Variables */
 extern io_registry_entry_t chosen_cached;
