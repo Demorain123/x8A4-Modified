@@ -168,3 +168,12 @@ selector 1 的 64-bit 输入结构由目标 dispatcher 的寄存器/偏移使用
 - 项目现有离线 nonce 逻辑：[x8A4.c](../../x8A4.c) 的 `x8A4_get_apnonce()`、`x8A4_get_cryptex_nonce()`；本轮没有执行这些函数。
 
 本轮只整理和保存研究文档；没有改生产路径、执行测试或硬件调用。因为目标反汇编已经给出确定拒绝，额外 Mock 无法验证真实权限，因此没有增加测试。文档包含目标固件静态配置常量和 kernelcache 文件哈希，不含私有 kernelcache、设备唯一标识、实际派生 key、Nonce/seed 值或票据。
+
+
+## 2026-11-11 阶段收尾状态
+
+截至本次收尾，设备专属的 0x8A3/0x8A4 key value 和完整 52-byte runtime record **仍未取得**。目标反汇编证明内部派生路径存在，但普通 selector 1 对 UID handle 的确定拒绝仍是当前权限边界；这不等于取钥目标已完成。
+
+项目已有一次正常模式 lockdown GetValue("ApNonce") 成功记录（本节为用户确认的归档事实，未重新读取设备）。它只证明当时取得过 APNonce，不证明调用完全无副作用，也不提供 0x8A3/0x8A4 key。历史 NOR/IM4R generator 与另一份现场 generator 不同，两份来源应分别保留；Cryptex Seed 已有记录，但它与独立 boot nonce 的对应仍未验证。实际值不写入本报告。
+
+未发现可返回缺失 key/record 的受支持 21D61 服务或 Dopamine/libjailbreak broker。按 [设备安全状态与材料分级](../DEVICE-SAFETY-STATUS.md) 维持阶段性停止；只有出现目标版本、现有权限、实际返回数据和可接受副作用均有证据的全新接口时，才恢复离线研究。
